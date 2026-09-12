@@ -33,14 +33,14 @@ QQ 群 ──①枚举/下载──▶ 本工具 ──②WebDAV──▶ OpenLi
 ## 下载安装（普通用户）
 
 到 [**Releases**](https://github.com/Calvin-Vollerei/qq-group-bridge/releases) 下载
-`qgb-v1.0-full.zip`（约 52 MB），解压到任意目录，双击 `启动搬运工.bat` 即可。
+**最新版本**的 `qgb-<版本>-full.zip`（约 52 MB），解压到任意目录，双击 `启动搬运工.bat` 即可。
 
 这个整包 = 主程序（自带 Python 3.11 运行时，**不需要装 Python**）+ NapCat 组件
 加载器。压缩包内**不含**任何凭据、群号、网盘账号，也**不含腾讯客户端二进制** ——
 QQ 运行时会在你首次点「启动组件」时由 `NapCatInstaller.exe` 从官方渠道自行下载。
 
 > 想自己装配？见下面的「快速开始（源码运行）」。
-> 只想下载主程序、NapCat 另外装？用 `qgb-v1.0-app-only.zip`。
+> 只想下载主程序、NapCat 另外装？用同版本的 `qgb-<版本>-app-only.zip`。
 
 ### 三步上手
 
