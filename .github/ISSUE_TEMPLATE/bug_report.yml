@@ -1,0 +1,86 @@
+name: Bug 报告
+description: 程序行为不符合预期、报错、崩溃
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请在提交前先看一遍 README 的「疑难排查」章节 —— `spawn EPERM`、
+        `PacketBackend 不支持当前QQ版本架构`、WebDAV 403、`empty token returned
+        from official API` 这几类问题那里都有现成解法。
+
+        ⚠️ 请**不要**粘贴真实的 refresh token、cookie、QQ 号、群号或群名。
+        日志已经过脱敏，直接贴日志片段即可。
+
+  - type: input
+    id: version
+    attributes:
+      label: 程序版本
+      description: 界面上「高级」页显示，或发布包文件名（例如 v0.1.0）
+      placeholder: v0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: 使用方式
+      options:
+        - 完整包（QQ群文件搬运工-v1.0-完整包.zip）
+        - 主程序分发包（QQ群文件搬运工-分发包.zip）+ NapCat 自装
+        - 源码运行（python run_bridge.py）
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: 系统与 Python
+      placeholder: Windows 11 23H2 x64 / Python 3.11.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 出问题的环节
+      options:
+        - QQ 登录 / NapCat 组件
+        - 群文件枚举或下载
+        - 上传到网盘（OpenList / WebDAV）
+        - 界面显示
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: 现象
+      description: 你做了什么、期望什么、实际发生什么
+      placeholder: |
+        1. 打开「QQ 登录」页点「启动组件」
+        2. 期望出现二维码
+        3. 实际：界面无反应，日志最后一行是……
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志（已脱敏）
+      description: 「监控」页日志区的内容，或 data/logs 下的日志片段
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      options:
+        - label: 我使用的是专用小号，且已知悉第三方 QQ 客户端的账号风险
+          required: false
+        - label: 我已确认上面粘贴的内容不含 token / cookie / 真实 QQ 号或群号
+          required: true

@@ -224,6 +224,44 @@ def is_vendor_path(path: Path) -> bool:
     return any(marker in part for part in parts for marker in VENDOR_MARKERS)
 
 
+#: 第三方**运行时**文件（比许可证文件更宽：整个子目录都是别人写的）
+#:
+#: 目前只有一种：NapCat 组件目录 `data/napcat/shell/**`。里面是 NapCat 自己的
+#: 加载器与**官方 WebUI 前端**，实测会稳定误报三条：
+#:   - qqnt.json / static/assets/*.js 里的厂商邮箱（QQ-Team@tencent.com 等）
+#:   - Vue 生产构建残留的 `-----BEGIN PRIVATE KEY-----` 字符串常量
+#:     （只出现在 npm 包 `vue/compiler-sfc` 里，它是**构建期常量**，不是私钥）
+#: 这些内容不是我们写的、也无法修改（改了 NapCat 就跑不起来），
+#: 因此只对这一路径放宽规则，其余规则照旧生效。
+VENDOR_RUNTIME_PREFIXES = (
+    "data/napcat/shell/",
+)
+
+
+def is_vendor_runtime(name: str) -> bool:
+    """压缩包条目是否属于第三方运行时（按 zip 内路径判断）。"""
+    normalized = name.replace("\\", "/").lower()
+    return any(prefix in normalized for prefix in VENDOR_RUNTIME_PREFIXES)
+
+
+def is_vendor_bundle(name: str) -> bool:
+    """第三方**打包产物**（压缩后的 JS）。
+
+    这是比 ``is_vendor_runtime`` 更窄的例外，也是唯一一处允许
+    ``-----BEGIN PRIVATE KEY-----`` 通过的路径，理由要说清楚：
+
+    npm 包 ``vue/compiler-sfc`` 里把这个字符串当作**字符串常量**'
+    （用于识别 .pem 内容），任何用 Vue 做前端的项目编译后都会带上它。
+    它出现在压缩过的 .js 里就意味着「一个字符串」而不是「一份私钥」。
+
+    为什么必须单独放宽而不能整条禁用：真正的私钥一般是 PEM 文件
+    （``.pem/.key/.crt/.p12``，或源码里的多行字面量），那些路径不在此例外内，
+    私钥规则对它们**照常生效**。
+    """
+    normalized = name.replace("\\", "/").lower()
+    return is_vendor_runtime(normalized) and "/static/" in normalized and normalized.endswith(".js")
+
+
 def scan_text(text: str, where: str, rules: tuple[Rule, ...] | None = None) -> list[Finding]:
     findings: list[Finding] = []
     for rule in (rules if rules is not None else RULES):
@@ -330,8 +368,11 @@ def scan_zip(path: Path) -> list[Finding]:
                     data = zf.read(info)
                 except (OSError, RuntimeError, zipfile.BadZipFile):
                     continue
-                vendor = is_vendor_path(Path(info.filename))
+                vendor = is_vendor_path(Path(info.filename)) or is_vendor_runtime(info.filename)
                 rules = VENDOR_RULES if vendor else RULES
+                if is_vendor_bundle(info.filename):
+                    # 第三方压缩 JS 里允许出现 BEGIN PRIVATE KEY 字符串常量
+                    rules = tuple(r for r in rules if "私钥" not in r.name)
                 findings.extend(
                     scan_text(data.decode("utf-8", "ignore"),
                               f"{path.name}!{info.filename}", rules)

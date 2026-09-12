@@ -30,6 +30,31 @@ QQ 群 ──①枚举/下载──▶ 本工具 ──②WebDAV──▶ OpenLi
 
 ---
 
+## 下载安装（普通用户）
+
+到 [**Releases**](https://github.com/Calvin-Vollerei/qq-group-file-bridge-QQ/releases) 下载
+`QQ群文件搬运工-v1.0-完整包.zip`（约 52 MB），解压到任意目录，双击
+`启动搬运工.bat` 即可。
+
+这个整包 = 主程序（自带 Python 3.11 运行时，**不需要装 Python**）+ NapCat 组件
+加载器。压缩包内**不含**任何凭据、群号、网盘账号，也**不含腾讯客户端二进制** ——
+QQ 运行时会在你首次点「启动组件」时由 `NapCatInstaller.exe` 从官方渠道自行下载。
+
+> 想自己装配？见下面的「快速开始（源码运行）」。
+> 只想下载主程序、NapCat 另外装？用 `QQ群文件搬运工-分发包.zip`。
+
+### 三步上手
+
+1. 解压后双击 `启动搬运工.bat`；首次启动 Windows 防火墙若弹窗，选「允许」
+2. **QQ 登录** 页 →「启动组件」→ 等就绪 →「获取二维码」→ 手机 QQ 扫码
+3. **网盘与凭据** 页 → 填 WebDAV 地址与账号 →「测试连接」→ 回 **监控** 页
+   点「▶ 开始监控」
+
+> NapCat 是非官方 QQ 客户端，**请用专用小号**，并保持默认轮询间隔。
+> 详见下方「风险提示与免责声明」。
+
+---
+
 ## 快速开始
 
 ### 环境要求
@@ -49,14 +74,21 @@ pip install -r requirements.txt
 本工具通过 [NapCat](https://github.com/NapNeko/NapCatQQ) 提供的 OneBot 11 HTTP 接口读写群文件。
 **本项目不捆绑、不再分发任何腾讯客户端二进制**，需要你自己下载。
 
-推荐用官方**一键无头绿色版**（自带运行时，最省事）：
+推荐用官方**一键无头绿色版**（自带安装器，最省事）：
 
 1. 从 [NapCat Releases](https://github.com/NapNeko/NapCatQQ/releases) 下载
-   `NapCat.Shell.Windows.OneKey.zip`（约 1 MB）
-2. 解压到 `dist/QQ群文件搬运工/data/napcat/`
-3. 运行其中的 `NapCatInstaller.exe`（它会自动下载 QQ 运行时）
-4. 回到程序「QQ 登录」页，点「启动组件」→「获取二维码」→ 手机 QQ 扫码
+   `NapCat.Shell.Windows.OneKey.zip`（约 1 MB）到任意目录（**不用解压**）
+2. 启动本程序 →「QQ 登录」页 → 点 **「从压缩包安装…」**，选中刚下载的 zip
+3. 点「启动组件」→ 首次运行会由 `NapCatInstaller.exe` 自动下载 QQ 运行时 → 
+   「获取二维码」→ 手机 QQ 扫码
 
+> 这一步也可以命令行做（会顺带预置好 OneBot HTTP 配置，省掉在 NapCat 网页端
+> 手点「新建 HTTP 服务器」）：
+>
+> ```bat
+> python scripts\setup_napcat.py --zip NapCat.Shell.Windows.OneKey.zip
+> ```
+>
 > 也可以把 `NapCat.Shell.zip` 解到 `data/napcat/shell/`，
 > 由本工具**挂钩**你已安装的 QQ NT —— 但那种方式**需要管理员权限**，
 > 且受 QQ 版本限制（见「疑难排查」）。
@@ -180,7 +212,7 @@ OpenList 的 WebDAV 对 `PUT`/`MKCOL` **单独校验权限位**
 ## 开发
 
 ```bat
-rem 单元测试（283 项）
+rem 单元测试（297 项）
 python -m unittest discover -s tests -t .
 
 rem 离线端到端冒烟（无需任何真实账号）
@@ -198,7 +230,13 @@ python scripts/scan_secrets.py --source
 
 rem 打包（含测试/冒烟/扫密闸门 + 生成可分发包）
 powershell -File scripts/build.ps1
+
+rem 合成 GitHub 发布用整包（主程序 + NapCat 组件，自带自检与扫密）
+python scripts/pack_release.py --version v1.0
 ```
+
+CI（GitHub Actions，`.github/workflows/ci.yml`）在 Python 3.10/3.11/3.12 上
+跑单元测试 + 离线冒烟 + 源码扫密，**全程不接触任何真实账号与密钥**。
 
 ### 目录结构
 
@@ -221,13 +259,26 @@ qgb/
   uploaders/       WebDAV 与本地目录适配器
   gui/             tkinter 界面
   dev/             测试替身与冒烟（**不随发布包分发**）
-scripts/           构建、验证、扫密、部署辅助
-tests/             283 项单元测试
+scripts/           构建、打包、验证、扫密、部署辅助
+tests/             297 项单元测试
 packaging/         发布包内的脚本与说明
 ```
 
 **设计约定**：`AppController` 是不依赖 tkinter 的门面层，
 界面只是它的一个视图 —— 因此全部业务逻辑都能在无 GUI 环境下测试。
+
+### 发布流程
+
+1. `powershell -File scripts/build.ps1` —— 跑全部闸门并生成 `dist/QQ群文件搬运工/`
+   与 `dist/QQ群文件搬运工-分发包.zip`（**不含** `data/`，即不含任何凭据）
+2. 在该目录里完成一次真实登录（NapCat 组件才会就位），再
+   `python scripts/pack_release.py --version v1.0` 合成整包
+3. 把 `dist/QQ群文件搬运工-v1.0-完整包.zip` 拖进 GitHub 的 Release
+
+第 2 步的整包脚本会自动排除本机运行痕迹：NapCat 跑过之后会在
+`data/napcat/shell/` 里留下 `napcat.out.log`、`guild1.db`、`cache/qrcode.png`
+等**含 QQ 号与群号**的文件，脚本按目录与后缀整体排除，并在打包后重新打开
+zip 逐条自检（命中即失败退出），最后再交给 `scan_secrets.py` 扫一遍。
 
 ---
 

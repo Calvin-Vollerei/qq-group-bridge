@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qq-group-bridge"
+version = "0.1.0"
+description = "QQ群文件搬运工：把指定 QQ 群的新文件自动抓取、过滤并上传到网盘（Windows 桌面版）"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Calvin-Vollerei" }]
+keywords = ["qq", "napcat", "onebot", "webdav", "openlist", "baidupan", "backup"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: Chinese (Simplified)",
+    "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Archiving :: Backup",
+]
+
+# 运行时依赖与 requirements.txt 保持一致：
+#   requests —— OneBot HTTP 与 WebDAV 全靠它，不引入额外框架
+#   segno    —— NapCat 返回的是登录 URL，二维码必须本地渲染
+#   Pillow   —— 界面预览/二维码图片处理
+# 说明：本机凭据用 Windows DPAPI（ctypes 调用 CryptProtectData），
+#       刻意不依赖 cryptography，减小分发包体积与攻击面。
+dependencies = [
+    "requests>=2.31.0",
+    "segno>=1.5.0",
+    "Pillow>=9.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Calvin-Vollerei/qq-group-file-bridge-QQ"
+Source = "https://github.com/Calvin-Vollerei/qq-group-file-bridge-QQ"
+Issues = "https://github.com/Calvin-Vollerei/qq-group-file-bridge-QQ/issues"
+
+[project.gui-scripts]
+qq-group-bridge = "run_bridge:main"
+
+[tool.setuptools]
+# 显式列举，避免 setuptools 自动发现把 tests/、scripts/、packaging/ 也当成包
+# （packaging/ 里是 .bat 与说明文本，不是 Python 包，自动发现会直接报错）
+packages = ["qgb", "qgb.gui", "qgb.napcat", "qgb.uploaders", "qgb.dev"]
+py-modules = ["run_bridge"]
