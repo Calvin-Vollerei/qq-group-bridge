@@ -232,6 +232,9 @@ powershell -File scripts/build.ps1
 
 rem 合成 GitHub 发布用整包（主程序 + NapCat 组件，自带自检与扫密）
 python scripts/pack_release.py --version v1.0
+
+rem 合成给零基础用户的交付包（中文包名、求救脚本改名、附带三份图文说明）
+python scripts/make_delivery_zip.py --version v1.0
 ```
 
 本仓库**未启用云端 CI**：这是个 Windows 专用工具（DPAPI、tkinter、注册表探测），
