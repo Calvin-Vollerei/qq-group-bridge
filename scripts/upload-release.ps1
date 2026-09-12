@@ -1,5 +1,5 @@
 ﻿# upload-release.ps1  -- minimal curl uploader
-# Upload dist\qgb-v1.0-*.zip to a GitHub Release.
+# Upload dist\qgb-<version>-*.zip to a GitHub Release.
 #
 # WHY THIS SCRIPT LOOKS "STUPID" (every curl call written out by hand):
 #   Windows PowerShell mangles three things, all verified in practice:
@@ -16,12 +16,14 @@
 #   cd C:\Users\oxyge\Downloads\qq-group-bridge
 #   $env:GH_TOKEN = "your token"   # needs Contents: Read and write (or classic repo)
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\upload-release.ps1
+#   Add -Version v1.2 -Tag v1.2 when publishing a different version.
 #
 #   Add -OnlySmall to upload just the 22 MB package.
 
 param(
     [string]$Repo = 'Calvin-Vollerei/qq-group-bridge',
-    [string]$Tag  = 'v1.0',
+    [string]$Tag  = 'v1.1',
+    [string]$Version = 'v1.1',   # 决定要上传哪个 dist\qgb-<Version>-*.zip
     [string]$Dist = 'dist',
     [switch]$OnlySmall
 )
@@ -82,9 +84,9 @@ if ($release -and $release.id) {
 }
 
 # ---------------------------------------------------------------- 2. upload
-$files = @(Get-ChildItem $Dist -File -Filter 'qgb-v1.0-*.zip' | Sort-Object Length)
+$files = @(Get-ChildItem $Dist -File -Filter "qgb-$Version-*.zip" | Sort-Object Length)
 if ($OnlySmall) { $files = @($files | Where-Object { $_.Name -like '*app-only*' }) }
-if (-not $files) { Write-Host "FAIL: no qgb-v1.0-*.zip under $Dist" -ForegroundColor Red; exit 1 }
+if (-not $files) { Write-Host "FAIL: no qgb-$Version-*.zip under $Dist" -ForegroundColor Red; exit 1 }
 
 $base = "https://uploads.github.com/repos/$Repo/releases/$($release.id)/assets"
 $failed = @()

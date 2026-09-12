@@ -17,8 +17,8 @@ body:
     id: version
     attributes:
       label: 程序版本
-      description: 界面上「高级」页显示，或发布包文件名（例如 v0.1.0）
-      placeholder: v0.1.0
+      description: 界面上「高级」页显示，或发布包文件名（例如 v1.1）
+      placeholder: v1.1
     validations:
       required: true
 
@@ -27,8 +27,8 @@ body:
     attributes:
       label: 使用方式
       options:
-        - 完整包（QQ群文件搬运工-v1.0-完整包.zip）
-        - 主程序分发包（QQ群文件搬运工-分发包.zip）+ NapCat 自装
+        - 完整包（qgb-<版本>-full.zip）
+        - 主程序分发包（qgb-<版本>-app-only.zip）+ NapCat 自装
         - 源码运行（python run_bridge.py）
     validations:
       required: true
