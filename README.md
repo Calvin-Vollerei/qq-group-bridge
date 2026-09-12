@@ -280,6 +280,34 @@ packaging/         发布包内的脚本与说明
 等**含 QQ 号与群号**的文件，脚本按目录与后缀整体排除，并在打包后重新打开
 zip 逐条自检（命中即失败退出），最后再交给 `scan_secrets.py` 扫一遍。
 
+#### 只改文档时的重打包（别踩这个坑）
+
+`make_release_zip.py` 是从 `dist/QQ群文件搬运工/` 收文件的，而那个目录是
+**第一次跑 `build.ps1` 时铺出来的**。所以：
+
+* 改完 `README.md` / `packaging/使用说明.txt` 之后只跑打包脚本，
+  包里带的仍是**发布目录里那份旧的** —— 源文件改了但没人同步过去；
+* 两个文件还会被强制转成 **UTF-8 带 BOM**（否则 Windows 记事本中文乱码），
+  这一步也只在 `build.ps1` 里做。
+
+补同步（等价于 `build.ps1` 里那两步，不重新编译 exe）：
+
+```python
+python - <<'EOF'
+from pathlib import Path
+BOM = b"\xef\xbb\xbf"
+for rel, src in (("README.md", "README.md"),
+                 ("使用说明.txt", "packaging/使用说明.txt")):
+    raw = Path(src).read_text(encoding="utf-8-sig").encode("utf-8")
+    (Path("dist/QQ群文件搬运工") / rel).write_bytes(raw if raw.startswith(BOM) else BOM + raw)
+EOF
+python scripts/make_release_zip.py
+python scripts/pack_release.py --version v1.0
+```
+
+最省事的做法仍是直接跑一次 `powershell -File scripts/build.ps1`——
+它会重新编译 exe 并同步这些文件，代价只是几分钟。
+
 ---
 
 ## 风险提示与免责声明
