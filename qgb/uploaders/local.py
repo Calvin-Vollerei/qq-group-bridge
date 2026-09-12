@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -20,6 +21,11 @@ from .base import ProgressCb, UploadResult, Uploader
 __all__ = ["LocalUploader"]
 
 log = logging.getLogger(__name__)
+
+#: 带盘符的 Windows 绝对路径（``D:\x`` / ``D:/x`` / ``D:x``）。
+#: 只有匹配它的输入才被当作**文件系统路径**；``/群目录/x.pdf`` 这类远端路径
+#: 虽然也以 ``/`` 开头，但语义上是「相对于 local_root」。
+_WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")
 
 
 class LocalUploader(Uploader):
@@ -122,28 +128,36 @@ class LocalUploader(Uploader):
     def _resolve(self, remote_path: str) -> Path:
         """把远端路径映射到本地路径，并**阻断路径穿越**。
 
-        同时接受两种写法：
-          * 远端路径 ``/群目录/文件.pdf`` —— 正常调用方传的
-          * **已在本根目录内**的绝对路径 —— ``upload()`` 历史上返回过这种值，
-            幂等/重试路径会把它再传进来；不特殊处理就会二次拼接 local_root。
-        指向根目录之外的绝对路径一律拒绝。
+        远端路径形如 ``/群目录/文件.pdf`` —— **以 ``/`` 开头但并不是文件系统
+        绝对路径**，这一条是核心语义，别被平台的 ``is_absolute()`` 骗了：
+
+        * Windows 上 ``Path("/QQ群备份/x.pdf").is_absolute()`` 是 ``False``（没有盘符）
+        * Linux 上同一个路径却是 ``True``（根就是 ``/``）
+
+        所以判断「这是不是一个文件系统路径」**只能看盘符**，不能看
+        ``is_absolute()``。踩过的坑：早先写了 ``is_absolute() or drive``，
+        在 Windows 上全绿、在 Linux 上把每一条正常远端路径都判成越界，
+        于是上传 100% 失败（``拒绝越界路径：x.pdf``）。
+
+        另有一种历史写法需要容忍：``upload()`` 曾返回本地**绝对**路径，
+        幂等/重试路径会把它再传回来。这种值带盘符，会被上面的分支正确识别；
+        指向根目录之外的则一律拒绝（由调用方负责）。
         """
         root = self.root.resolve()
         raw = str(remote_path or "")
 
-        if raw:
+        if _WINDOWS_DRIVE.match(raw):
             candidate = Path(raw)
-            if candidate.is_absolute() or candidate.drive:
-                try:
-                    resolved = candidate.resolve()
-                except OSError:
-                    resolved = candidate
-                if resolved == root or root in resolved.parents:
-                    return candidate
-                raise UploadError(
-                    f"拒绝越界路径：{candidate.name}",
-                    hint="目标路径不在本地根目录内，已被安全拦截。",
-                )
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                resolved = candidate
+            if resolved == root or root in resolved.parents:
+                return candidate
+            raise UploadError(
+                f"拒绝越界路径：{candidate.name}",
+                hint="目标路径不在本地根目录内，已被安全拦截。",
+            )
 
         rel = "/" + raw.lstrip("/")
         parts = [p for p in rel.split("/") if p and p not in (".", "..")]
