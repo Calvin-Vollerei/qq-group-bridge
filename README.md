@@ -234,8 +234,9 @@ rem 合成 GitHub 发布用整包（主程序 + NapCat 组件，自带自检与�
 python scripts/pack_release.py --version v1.0
 ```
 
-CI（GitHub Actions，`.github/workflows/ci.yml`）在 Python 3.10/3.11/3.12 上
-跑单元测试 + 离线冒烟 + 源码扫密，**全程不接触任何真实账号与密钥**。
+本仓库**未启用云端 CI**：这是个 Windows 专用工具（DPAPI、tkinter、注册表探测），
+在 Linux 上跑测试只能反映宿主环境差异、反映不了真实使用场景，维护成本却很高。
+所有闸门都由上面这几条命令在**本机**执行，且互不依赖网络与真实账号。
 
 ### 目录结构
 
