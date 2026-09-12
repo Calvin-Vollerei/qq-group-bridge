@@ -62,7 +62,7 @@ def setup_logging(
 
     logger.setLevel(level)
     logger.propagate = False
-    logger.handlers.clear()
+    _close_handlers(logger)
 
     redactor = RedactingFilter()
     fmt = logging.Formatter(
@@ -93,18 +93,38 @@ def setup_logging(
     # 兜底：把第三方库（requests/urllib3）的日志也纳入根日志器
     for noisy in ("urllib3", "requests"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
-        logging.getLogger(noisy).handlers.clear()
+        _close_handlers(logging.getLogger(noisy))
         logging.getLogger(noisy).propagate = True
 
     _CONFIGURED = True
     return logger
 
 
+def _close_handlers(logger: logging.Logger) -> None:
+    """移除并**关闭**日志器上的全部 handler。
+
+    ⚠️ 不能只调 ``handlers.clear()``：那样 FileHandler 持有的文件对象一直不关，
+    ``TimedRotatingFileHandler``（``delay=True`` 时也会在首次写入后打开）留下的
+    句柄要等 GC 才释放，于是解释器刷出成片的
+    ``ResourceWarning: unclosed file ...\\logs\\qgb.log``。
+
+    真实影响：CI 日志被这些警告淹没（一次运行 30+ 条），
+    真正的失败信息反而被埋掉 —— 排查时吃过这个亏。
+    ``-W error::ResourceWarning`` 时更会直接失败。
+    """
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:  # noqa: BLE001 - 关闭失败不该影响调用方
+            pass
+
+
 def reset_logging_for_tests() -> None:
-    """仅供测试：允许重新配置。"""
+    """仅供测试：允许重新配置，并释放上一次的日志文件句柄。"""
     global _CONFIGURED
     _CONFIGURED = False
-    logging.getLogger("qgb").handlers.clear()
+    _close_handlers(logging.getLogger("qgb"))
 
 
 def log_exception(logger: logging.Logger, exc: BaseException, context: str = "") -> dict[str, Any]:

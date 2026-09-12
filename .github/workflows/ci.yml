@@ -34,6 +34,12 @@ jobs:
       - name: 单元测试
         run: python -m unittest discover -s tests -t . -v
 
+      - name: 资源泄漏闸门（把 ResourceWarning 当错误）
+        # 真实教训：日志 FileHandler 曾被 handlers.clear() 摘掉而没关闭，
+        # 一次运行刷出 30+ 条 "unclosed file ...\\logs\\qgb.log"，
+        # 把真正的失败信息埋掉了。这条把它变成硬失败。
+        run: python -W error::ResourceWarning -m unittest tests.test_logging tests.test_controller
+
       - name: 离线端到端冒烟（无账号、无网络）
         run: python -m qgb.dev.smoke
 

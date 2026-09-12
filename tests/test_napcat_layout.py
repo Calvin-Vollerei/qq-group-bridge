@@ -40,6 +40,22 @@ class LayoutTest(unittest.TestCase):
         cfg = NapCatConfig(install_dir=str(install), qq_path=qq)
         return NapCatManager(cfg, self.data)
 
+    def _fake_qq(self) -> str:
+        """造一个**真实存在**的假 QQ.exe，并返回它的路径。
+
+        ⚠️ 不能写死 ``D:/QQ/QQ.exe`` 这种"看起来像"的路径：
+        ``resolve_qq_path()`` 会对每个候选做 ``is_file()`` 校验，文件不存在就
+        返回空串，于是挂钩模式被跳过、回退到其它启动方式，断言全线失败。
+        本机之所以碰巧能过，只是因为这台机器真装了 QQ（注册表里有真路径兜底），
+        换个 runner 就暴露 —— 典型的「测试依赖本机环境」。
+
+        顺带注意：``resolve_qq_path`` 会校验文件名必须是 ``QQ.exe`` 大小写不敏感，
+        所以假文件必须叫这个名字。
+        """
+        path = self.root / "qq" / "QQ.exe"
+        _touch(path)
+        return str(path)
+
     # -------------------------------------------------- 自带运行时
 
     def _make_embedded(self, base: Path) -> None:
@@ -64,7 +80,7 @@ class LayoutTest(unittest.TestCase):
     def test_embedded_runs_node_direct(self) -> None:
         base = self.data / "napcat-embedded"
         self._make_embedded(base)
-        mgr = self._manager(base, qq="D:/QQ/QQ.exe")
+        mgr = self._manager(base, qq=self._fake_qq())
         cmd, cwd = mgr.launcher_command()
         self.assertEqual(len(cmd), 2)
         self.assertTrue(cmd[0].lower().endswith("node.exe"))
@@ -80,7 +96,7 @@ class LayoutTest(unittest.TestCase):
         self._make_embedded(base)
         _touch(base / "shell" / "NapCatWinBootMain.exe")
         _touch(base / "shell" / "NapCatWinBootHook.dll")
-        mgr = self._manager(base, qq="D:/QQ/QQ.exe")
+        mgr = self._manager(base, qq=self._fake_qq())
 
         self.assertIsNotNone(mgr.hook_layout(), "shell/ 是货真价实的挂钩布局")
         cmd, _cwd = mgr.launcher_command()
@@ -114,7 +130,7 @@ class LayoutTest(unittest.TestCase):
         _touch(base / "shell" / "napcat.mjs")
         _touch(base / "shell" / "qqnt.json")
 
-        mgr = self._manager(base, qq="D:/QQ/QQ.exe")
+        mgr = self._manager(base, qq=self._fake_qq())
         cmd, cwd = mgr.launcher_command()
         self.assertEqual(len(cmd), 3, "挂钩模式需要 QQ 路径与 Hook DLL 两个参数")
         self.assertTrue(cmd[0].lower().endswith("napcatwinbootmain.exe"))
@@ -131,7 +147,7 @@ class LayoutTest(unittest.TestCase):
         _touch(base / "shell" / "napcat.mjs")
         _touch(base / "shell" / "qqnt.json")
 
-        mgr = self._manager(base, qq="D:/QQ/QQ.exe")
+        mgr = self._manager(base, qq=self._fake_qq())
         mgr.launcher_command()
         loader = base / "shell" / "loadNapCat.js"
         self.assertTrue(loader.is_file())

@@ -141,9 +141,18 @@ class ControllerCase(unittest.TestCase):
         self.assertIn("credentials", health)
 
     def test_data_dir_is_inside_override(self) -> None:
+        """数据目录必须在 ``QGB_DATA_DIR`` 之下。
+
+        ⚠️ 不要用字符串前缀比较：Windows 的临时目录可能是**短名**形式
+        （``C:\\Users\\RUNNER~1\\AppData\\Local\\Temp``），而解析后的路径是
+        长名（``C:\\Users\\runneradmin\\...``），两者指向同一个目录却前缀不匹配。
+        本机碰巧一致，CI 上就翻车了 —— 所以统一先 ``resolve()``。
+        """
+        data_dir = Path(self.controller.data_dir).resolve()
+        expected = Path(self.tmp).resolve()
         self.assertTrue(
-            str(self.controller.data_dir).startswith(str(self.tmp)),
-            f"数据目录未使用 QGB_DATA_DIR：{self.controller.data_dir}",
+            data_dir == expected or expected in data_dir.parents,
+            f"数据目录未使用 QGB_DATA_DIR：{data_dir}（期望位于 {expected} 之下）",
         )
 
     def test_paths_are_exposed(self) -> None:
