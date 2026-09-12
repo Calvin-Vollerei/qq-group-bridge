@@ -211,7 +211,7 @@ OpenList 的 WebDAV 对 `PUT`/`MKCOL` **单独校验权限位**
 ## 开发
 
 ```bat
-rem 单元测试（318 项）
+rem 单元测试（315 项）
 python -m unittest discover -s tests -t .
 
 rem 离线端到端冒烟（无需任何真实账号）
@@ -259,7 +259,7 @@ qgb/
   gui/             tkinter 界面
   dev/             测试替身与冒烟（**不随发布包分发**）
 scripts/           构建、打包、验证、扫密、部署辅助
-tests/             318 项单元测试
+tests/             315 项单元测试
 packaging/         发布包内的脚本与说明
 ```
 

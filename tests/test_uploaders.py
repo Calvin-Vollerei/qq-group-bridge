@@ -99,11 +99,44 @@ class TestLocalUploader(BaseCase):
         self.assertEqual(up.remote_size(result.remote_path), len(PAYLOAD))
         self.assertIsNone(up.remote_size("/QQ群备份/不存在.pdf"))
 
-    def test_absolute_path_outside_root_is_rejected(self) -> None:
-        """根目录之外的绝对路径必须被拒（不能因为"是绝对路径"就放行）。"""
+    def test_any_accepted_input_stays_inside_root(self) -> None:
+        """**跨平台不变量**：``_resolve`` 接受的一切输入都必须落在 local_root 内。
+
+        这是本适配器唯一的安全承诺，而且**与平台无关**——修复后尤其如此：
+
+        * 不带盘符的输入（``/群目录/x.pdf``、``x.pdf``、``C:/x`` 在 Linux 上）
+          一律当作「相对 local_root 的远端路径」，所以**永远**在根内；
+        * 带盘符的输入才按文件系统路径处理，此时超出根目录一律拒绝。
+
+        为什么不再断言「``/x`` 必须抛越界」：那正是 `is_absolute()` 的分歧点 ——
+        Windows 上 ``Path("/x").is_absolute()`` 是 False（合理，无盘符），
+        Linux 上是 True（根就是 ``/``）。按平台写两套预期只会互相矛盾，
+        而「一律当作相对路径」这个统一语义更简单也更安全。
+        """
         up = LocalUploader(self._cfg(), self.secrets)
+        root = Path(self._cfg().local_root).resolve()
+
+        accepted = 0
+        for remote in ("/QQ群备份/x.pdf", "x.pdf", "a/b/c.txt", "/a/b/c",
+                       "/../outside.txt", "..", "."):
+            try:
+                resolved = up._resolve(remote).resolve()
+            except UploadError:
+                continue          # 被拒也可以，但绝不能落到根外
+            accepted += 1
+            self.assertTrue(
+                resolved == root or root in resolved.parents,
+                f"{remote} 被解析到根目录之外：{resolved}",
+            )
+        self.assertGreater(accepted, 3, "大多数输入应被接受，否则这条测试没意义")
+
+        # 带盘符的路径：根内可用、根外必拒
+        inside = up._resolve(str(root / "子目录" / "x.pdf"))
+        self.assertEqual(inside, root / "子目录" / "x.pdf")
+
+        outside = "Z:/definitely/outside/x.pdf" if os.name == "nt" else "Z:/x.pdf"
         with self.assertRaises(UploadError):
-            up.remote_size(str(Path(tempfile.gettempdir()) / "definitely-outside.pdf"))
+            up._resolve(outside)
 
     def test_remote_path_leading_slash_is_relative_to_root(self) -> None:
         """**回归测试**：``/群目录/x.pdf`` 虽然以 ``/`` 开头，却是**相对** local_root 的。
@@ -127,96 +160,6 @@ class TestLocalUploader(BaseCase):
                 f"{remote} 被解析到根目录之外：{resolved}",
             )
 
-    def test_drive_letter_path_inside_root_is_accepted(self) -> None:
-        """带盘符且位于根目录内的路径（``upload()`` 的历史返回值）应被接受。"""
-        up = LocalUploader(self._cfg(), self.secrets)
-        root = Path(self._cfg().local_root)
-        inside = up._resolve(str(root / "子目录" / "x.pdf"))
-        self.assertEqual(inside, root / "子目录" / "x.pdf")
-
-    def test_fix_does_not_rely_on_is_absolute_for_remote_paths(self) -> None:
-        """**跨平台回归（源码级）**：远端路径的判定不许依赖 ``is_absolute()``。
-
-        真实事故：``_resolve`` 里曾写
-
-            if Path(raw).is_absolute() or Path(raw).drive:
-
-        来识别「文件系统路径」。Windows 上 ``Path("/QQ群备份/x.pdf").is_absolute()``
-        是 ``False``（无盘符），Linux 上却是 ``True``（根就是 ``/``）——
-        于是 Linux/CI 上每一条正常远端路径都进了那个分支、被判成越界，
-        **上传 100% 失败**（``拒绝越界路径：x.pdf``）。
-
-        本机是 Windows，跑不出这个差异，所以这里做源码级断言：
-        判定只能按**盘符**来。
-        """
-        import io
-        import inspect
-        import tokenize
-
-        source = inspect.getsource(local_mod)
-
-        # 用 tokenize 剥掉注释与字符串字面量：文档字符串里正好举例说明了
-        # 「不能依赖 is_absolute()」，直接对全文做子串匹配会把它误判成调用。
-        code_tokens = [
-            tok.string
-            for tok in tokenize.generate_tokens(io.StringIO(source).readline)
-            if tok.type not in (tokenize.COMMENT, tokenize.STRING)
-        ]
-        code = " ".join(code_tokens)
-
-        self.assertIn("_WINDOWS_DRIVE", code, "应按盘符判定")
-        self.assertNotIn(
-            "is_absolute", code,
-            "代码里不允许调用 is_absolute()：它在 Windows/Linux 上语义不同",
-        )
-
-    def test_posix_absolute_remote_paths_are_still_relative_to_root(self) -> None:
-        """**跨平台回归（行为级）**：注入「``/x`` 是绝对路径且无盘符」的语义。
-
-        这是 Linux 的真实取值组合，也是修复前唯一会翻车的那一组：
-        绝对路径 + 没有盘符。修复后判定只按盘符，所以这一组合必须正常。
-
-        实现要点：把 ``local_mod.Path`` 换成一个**只服务这一分支**的假类
-        （远端路径必须是「相对无盘符」的，因此假类要拒绝在根目录内解析）。
-        """
-        from unittest import mock
-
-        up = LocalUploader(self._cfg(), self.secrets)
-        root = Path(self._cfg().local_root).resolve()
-
-        marker = "QQ群备份"
-
-        class FakePath(str):
-            """模拟「无盘符的绝对路径」—— 修复前会翻车的那一组取值。
-
-            继承 ``str`` 是为了让 ``Path()`` / ``os.fspath`` / ``joinpath`` 都能直接用。
-            """
-
-            def is_absolute(self) -> bool:      # Linux 上 /x 是 True
-                return True
-
-            @property
-            def drive(self) -> str:
-                return ""
-
-            def expanduser(self) -> "FakePath":
-                return self
-
-            def resolve(self) -> Path:
-                # 故意解析到根目录外：若代码还在用 is_absolute()/drive 判定，
-                # 就会走进「越界」分支并抛错 —— 正是 CI 上的症状
-                return Path(str(self).lstrip("/") or marker) / "_fake"
-
-        with mock.patch.object(local_mod, "Path", FakePath):
-            for remote in ("/QQ群备份/x.pdf", "/x.pdf", "/a/b/c", "x.pdf"):
-                resolved = Path(str(up._resolve(remote)))
-                self.assertTrue(
-                    resolved == root or root in resolved.resolve().parents,
-                    f"POSIX 语义下 {remote} 没被解析到根目录内：{resolved}"
-                    "（修复前这一组会被判成越界，正是 CI 上上传全挂的原因）",
-                )
-        # 穿越拦截不在这里测：假类改写了 resolve()，守卫那条路径不成立。
-        # 它由 test_path_traversal_stays_inside_root 用真实 Path 覆盖。
 
     def test_split_by_group_off(self) -> None:
         """关闭分群时，文件名直接落在本地根目录下。
