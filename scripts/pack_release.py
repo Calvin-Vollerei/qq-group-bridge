@@ -5,7 +5,7 @@
 GitHub 发布页上默认只放**一个**资产，用户下载解压即用，不必先开程序再
 去点「从压缩包安装…」。本脚本就是生成那个「整包」：
 
-    QQ群文件搬运工-v0.1.0-完整包.zip
+    qgb-v1.0-full.zip
       QQ群文件搬运工/            ← 主程序（来自 make_release_zip.py 的分发包）
         QQGroupBridge.exe
         _internal/ ...
@@ -34,6 +34,7 @@ GitHub 发布页上默认只放**一个**资产，用户下载解压即用，不
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import zipfile
@@ -42,7 +43,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
 APP_NAME = "QQ群文件搬运工"
-DEFAULT_BASE_ZIP = DIST / f"{APP_NAME}-分发包.zip"
+def _release_tag() -> str:
+    """发布标签：环境变量 > dist/RELEASE.txt > v1.0。
+
+    与 ``make_release_zip.py`` 用**同一个来源**，否则会出现
+    「主程序包叫 qgb-v0.1.0-app-only.zip、整包却去找 qgb-v1.0-app-only.zip」
+    这种对不上的情况（实测踩过）。
+    """
+    env = os.environ.get("QGB_RELEASE_TAG")
+    if env:
+        return env.strip()
+    try:
+        tag = (DIST / "RELEASE.txt").read_text(encoding="utf-8").strip()
+        if tag:
+            return tag
+    except OSError:
+        pass
+    return "v1.0"
+
+
+DEFAULT_BASE_ZIP = DIST / f"qgb-{_release_tag()}-app-only.zip"
 DEFAULT_RELEASE_DIR = DIST / APP_NAME
 DEFAULT_NAPCAT_DIR = DEFAULT_RELEASE_DIR / "data" / "napcat"
 
@@ -219,13 +239,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", default="v1.0", help="版本号，用于文件名（默认 v1.0）")
     parser.add_argument("--base-zip", default=str(DEFAULT_BASE_ZIP), help="主程序分发包路径")
     parser.add_argument("--napcat-dir", default=str(DEFAULT_NAPCAT_DIR), help="NapCat 组件目录")
-    parser.add_argument("--out", default="", help="输出 zip 路径（默认 dist/<名>-完整包.zip）")
+    parser.add_argument("--out", default="", help="输出 zip 路径（默认 dist/qgb-<版本>-full.zip）")
     parser.add_argument("--no-napcat", action="store_true", help="只发主程序包，不含 NapCat 组件")
     args = parser.parse_args(argv)
 
     base_zip = Path(args.base_zip)
     napcat_dir = Path(args.napcat_dir)
-    out_zip = Path(args.out) if args.out else DIST / f"{APP_NAME}-{args.version}-完整包.zip"
+    #: 输出名刻意用纯 ASCII：中文文件名在 GitHub 网页上传/展示时容易被截断，
+    #: 而 Release 资产名是用户最先看到的东西，稳定比好看重要。
+    out_zip = Path(args.out) if args.out else DIST / f"qgb-{args.version}-full.zip"
 
     with_napcat = not args.no_napcat
     print("=" * 68)

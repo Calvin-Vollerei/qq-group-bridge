@@ -24,12 +24,17 @@
 用法::
 
     python scripts/make_release_zip.py
-    python scripts/make_release_zip.py --release-dir "dist/QQ群文件搬运工" --out dist/分发包.zip
+    python scripts/make_release_zip.py --release-dir "dist/QQ群文件搬运工" --out dist/qgb-v1.0-app-only.zip
+
+环境变量::
+
+    QGB_RELEASE_TAG=v1.0    # 指定 Release 标签，决定默认输出名（默认取 v<版本号>）
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import zipfile
 from pathlib import Path
@@ -38,6 +43,17 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from scan_secrets import scan_zip  # noqa: E402
+
+
+def _app_version() -> str:
+    """读取程序版本号，用于默认输出名（失败时回退，不让打包流程中断）。"""
+    try:
+        sys.path.insert(0, str(ROOT))
+        from qgb.version import __version__  # noqa: PLC0415
+
+        return __version__
+    except Exception:  # pragma: no cover - 打包环境异常时仍要能出包
+        return "0.0.0"
 
 #: 发布目录下**绝不分发**的顶层条目（运行期数据 / 本机凭据 / 构建残留）。
 #: 这是主要机制 —— 便携模式下所有运行期状态都在 data\ 里。
@@ -139,6 +155,38 @@ def verify_no_runtime_leak(out_zip: Path) -> list[str]:
     return problems
 
 
+def _release_tag() -> str:
+    """返回本次 Release 的标签，用于默认输出名。
+
+    优先级：环境变量 ``QGB_RELEASE_TAG`` > ``dist/RELEASE.txt`` > ``v<程序版本>``。
+    写成「读文件」而不是「跟程序版本走」，是因为**发布标签和程序版本可以不同**
+    （程序内部版本 0.1.0 也可以打 v1.0 这个标签）；两个打包脚本读同一个来源，
+    才不会出现「主程序包叫 v0.1.0、整包叫 v1.0」这种对不上的情况。
+    """
+    env = os.environ.get("QGB_RELEASE_TAG")
+    if env:
+        return env.strip()
+    tag_file = ROOT / "dist" / "RELEASE.txt"
+    try:
+        tag = tag_file.read_text(encoding="utf-8").strip()
+        if tag:
+            return tag
+    except OSError:
+        pass
+    return f"v{_app_version()}"
+
+
+def default_out_zip() -> Path:
+    """默认输出名：纯 ASCII，且与 Release 资产名一致。
+
+    为什么不用中文名：GitHub 的 Release 资产名就是用户下载时看到的文件名，
+    中文名在网页上传/展示环节容易被截断成 `QQ.-v1.0-.zip` 这种样子
+    （实测踩过），而脚本里的中文路径在 GBK 控制台下也容易被误传。
+    容器目录名仍保持中文（用户解压后看到的文件夹），只有 zip 文件名走 ASCII。
+    """
+    return ROOT / "dist" / f"qgb-{_release_tag()}-app-only.zip"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="生成可分发的发布包并扫描")
     parser.add_argument("--release-dir", default="")
@@ -154,7 +202,7 @@ def main() -> int:
         print(f"❌ 发布目录不存在：{release_dir}")
         return 2
 
-    out_zip = Path(args.out) if args.out else ROOT / "dist" / "QQ群文件搬运工-分发包.zip"
+    out_zip = Path(args.out) if args.out else default_out_zip()
 
     print("=" * 68)
     print("生成可分发包")
