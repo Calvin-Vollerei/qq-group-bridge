@@ -43,8 +43,15 @@ napcat-start.log
 #
 # 本项目的原则是**不捆绑、不再分发** QQ 客户端与 NapCat，
 # 由使用者在首次运行时自行下载。
+#
+# ⚠️ 这里必须写**带路径的完整模式**，不能只写目录名。
+# 踩过的坑：早先写成 `napcat/`，Git 会匹配**任意层级**的同名目录，
+# 于是把源码包 `qgb/napcat/` 也一起忽略了 —— 4 个源码文件从来没进过仓库，
+# 本地测试全过、CI 与全新克隆全部 `ModuleNotFoundError: No module named 'qgb.napcat'`。
+# 教训：忽略规则一律写成相对仓库根的完整路径，并在 tests/test_repo_hygiene.py 里回归。
 # ---------------------------------------------------------------
-napcat/
+data/napcat/
+data/napcat-embedded/
 OpenList/
 runtime/
 
