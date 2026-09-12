@@ -65,8 +65,21 @@ if ($release -and $release.id) {
     Write-Host "  OK: release exists: $($release.name)  id=$($release.id)" -ForegroundColor Green
 } else {
     Write-Host "  no release for $Tag, creating ..."
+    # Release 描述：优先用 docs/release-notes-<版本>.md（整篇中文，含 % 与 -> 等字符），
+    # 必须用 ConvertTo-Json 正规转义 —— 手工拼 JSON 字符串会被 GitHub 拒绝
+    # （422 Validation Failed / Invalid request）。
+    $notesFile = Join-Path $PSScriptRoot ("..\docs\release-notes-$Tag.md")
+    if (Test-Path $notesFile) {
+        $notesBody = (Get-Content $notesFile -Raw -Encoding UTF8)
+        Write-Host "  using release notes: $notesFile"
+    } else {
+        $notesBody = "See repo README: download, then three steps. Windows 10/11 x64."
+        Write-Host "  no release notes file found, using a short default body"
+    }
+
     $bodyFile = Join-Path $env:TEMP 'qgb-release.json'
-    $json = '{"tag_name":"' + $Tag + '","name":"' + $Tag + '","draft":false,"prerelease":false,"body":"See repo README: download, then three steps. Windows 10/11 x64."}'
+    $payload = @{ tag_name = $Tag; name = $Tag; draft = $false; prerelease = $false; body = $notesBody }
+    $json = $payload | ConvertTo-Json -Depth 4
     [System.IO.File]::WriteAllText($bodyFile, $json, (New-Object System.Text.UTF8Encoding($false)))
 
     $raw  = & $curl -s -X POST -H $auth -H "User-Agent: qgb" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data-binary "@$bodyFile" "https://api.github.com/repos/$Repo/releases"
