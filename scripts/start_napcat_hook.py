@@ -40,6 +40,7 @@ from qgb.config import NapCatConfig, load_config  # noqa: E402
 from qgb.napcat.client import OneBotClient  # noqa: E402
 from qgb.napcat.process import NapCatManager, is_admin, resolve_qq_path  # noqa: E402
 from qgb.napcat.qr import check_login, fetch_qrcode  # noqa: E402
+from _console import use_utf8_console  # noqa: E402  控制台切 UTF-8（Linux 上常是 cp1252）
 from qgb.paths import resolve_data_dir  # noqa: E402
 
 
@@ -77,6 +78,7 @@ def elevate_and_exit(argv: list[str]) -> int:
 
 
 def main() -> int:
+    use_utf8_console()
     parser = argparse.ArgumentParser(description="启动 NapCat 挂钩并验证二维码")
     parser.add_argument("--data-dir", default="")
     parser.add_argument("--release", action="store_true",

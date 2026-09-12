@@ -33,10 +33,12 @@ from qgb.config import NapCatConfig  # noqa: E402
 from qgb.napcat.client import OneBotClient  # noqa: E402
 from qgb.napcat.process import NapCatManager  # noqa: E402
 from qgb.napcat.qr import check_login, fetch_qrcode  # noqa: E402
+from _console import use_utf8_console  # noqa: E402  控制台切 UTF-8（Linux 上常是 cp1252）
 from qgb.paths import resolve_data_dir  # noqa: E402
 
 
 def main() -> int:
+    use_utf8_console()
     parser = argparse.ArgumentParser(description="安装并启动 NapCat")
     parser.add_argument("--data-dir", default="", help="数据目录（默认自动解析）")
     parser.add_argument("--zip", default="", help="NapCat 压缩包路径（首次安装用）")

@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from qgb import dpapi  # noqa: E402
 from qgb.errors import CredentialError, PlatformUnsupported  # noqa: E402
+from _console import use_utf8_console  # noqa: E402  控制台切 UTF-8（Linux 上常是 cp1252）
 from qgb.secrets import (  # noqa: E402
     KEY_NETDISK_WEBDAV_PASSWORD,
     DpapiBackend,
@@ -55,6 +56,7 @@ class Report:
 
 
 def main() -> int:
+    use_utf8_console()
     print("=" * 64)
     print("DPAPI 凭据路径自检（真实后端）")
     print("=" * 64)

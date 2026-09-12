@@ -26,6 +26,7 @@ from ..napcat.client import FakeOneBotClient
 from ..pipeline import Pipeline
 from ..store import StateStore
 from ..uploaders.local import LocalUploader
+from ..utils import force_utf8_stdio
 from .fakes import RangeFileServer, make_config, make_secrets
 
 log = get_logger(__name__)
@@ -177,6 +178,10 @@ def _test_resume(root: Path, client, server, name: str, content: bytes, *, sourc
 
 
 def main() -> int:
+    # 必须先切 UTF-8：Linux/容器里 stdout 可能是 cp1252，下面这些中文一 print 就崩
+    # （CI 上真实发生过：UnicodeEncodeError: 'charmap' codec ... position 2-7）
+    force_utf8_stdio()
+
     print("=" * 66)
     print("QQ群文件搬运工 —— 离线端到端冒烟（无需真实账号）")
     print("=" * 66)

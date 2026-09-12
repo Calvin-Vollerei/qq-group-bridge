@@ -45,6 +45,7 @@ sys.path.insert(0, str(ROOT))
 
 from qgb.config import NapCatConfig  # noqa: E402
 from qgb.napcat.process import NapCatManager  # noqa: E402
+from _console import use_utf8_console  # noqa: E402  控制台切 UTF-8（Linux 上常是 cp1252）
 from qgb.paths import resolve_data_dir  # noqa: E402
 
 
@@ -131,6 +132,7 @@ def install_napcat_payload(shell_zip: Path, app_dir: Path) -> Path:
 
 
 def main() -> int:
+    use_utf8_console()
     parser = argparse.ArgumentParser(description="离线组装 NapCat 无头运行时")
     parser.add_argument("--data-dir", default="")
     parser.add_argument("--qq-installer", default="", help="浏览器下载的 QQ 安装包")

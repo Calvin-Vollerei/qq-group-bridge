@@ -91,6 +91,8 @@ class ControllerCase(unittest.TestCase):
 
         napcat = self.controller.napcat
         self.assertIsNotNone(napcat)
+        if self.controller.secrets is None:
+            self.skipTest("凭据库不可用（DPAPI 不可用时初始化会返回 None）")
 
         # 先塞一个"旧令牌"进凭据库
         self.controller.secrets.set(KEY_NAPCAT_WEBUI_TOKEN, "STALE-TOKEN-0000")
@@ -115,6 +117,8 @@ class ControllerCase(unittest.TestCase):
         """组件配置读不到时，退回凭据库里的值（别把已保存的令牌弄丢）。"""
         from qgb.secrets import KEY_NAPCAT_WEBUI_TOKEN
 
+        if self.controller.secrets is None:
+            self.skipTest("凭据库不可用（DPAPI 不可用时初始化会返回 None）")
         self.controller.secrets.set(KEY_NAPCAT_WEBUI_TOKEN, "ONLY-IN-STORE")
         self.assertEqual(self.controller._webui_token(), "ONLY-IN-STORE")
 
@@ -226,6 +230,10 @@ class ControllerCase(unittest.TestCase):
     def test_start_monitor_with_valid_config(self) -> None:
         if self.controller.store is None:
             self.skipTest("状态库不可用")
+        if self.controller.secrets is None:
+            # start_monitor() 会 build_uploader()，而它需要凭据库；
+            # DPAPI 不可用的环境（部分 CI）里 secrets 为 None，必然返回 False。
+            self.skipTest("凭据库不可用")
         self.controller.config.groups = ["123456789"]
         self.controller.config.upload.adapter = "local"
         self.controller.config.upload.local_root = str(self.tmp / "net")
@@ -244,6 +252,8 @@ class ControllerCase(unittest.TestCase):
     def test_double_start_is_idempotent(self) -> None:
         if self.controller.store is None:
             self.skipTest("状态库不可用")
+        if self.controller.secrets is None:
+            self.skipTest("凭据库不可用")
         self.controller.config.groups = ["123456789"]
         self.controller.config.upload.adapter = "local"
         self.controller.config.upload.local_root = str(self.tmp / "net")

@@ -27,12 +27,22 @@ class TestDataDirResolution(unittest.TestCase):
         self.assertTrue((base / "qgb").is_dir())
 
     def test_candidates_are_ordered(self) -> None:
+        """候选目录的**顺序契约**：环境变量在首位、兜底在末位。
+
+        ⚠️ 不要断言一定出现 ``%LOCALAPPDATA%``：Linux/容器里既没有
+        ``LOCALAPPDATA`` 也没有 ``APPDATA``，代码会退化到「用户主目录」。
+        本机（Windows）永远有这两个变量，所以以前只在 CI 上失败。
+        """
         cands = paths.candidate_dirs()
         labels = [label for label, _ in cands]
         self.assertTrue(cands)
-        self.assertIn("%LOCALAPPDATA%", " ".join(labels))
         # 最后一项必须是兜底
         self.assertIn("兜底", labels[-1])
+        # 标准位置：Windows 用 %LOCALAPPDATA%，否则退化到用户主目录 —— 二者必居其一
+        if os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA"):
+            self.assertIn("%LOCALAPPDATA%", labels)
+        else:
+            self.assertIn("用户主目录", labels)
 
     def test_env_override_wins(self) -> None:
         with tempfile.TemporaryDirectory(prefix="qgb-paths-") as tmp:

@@ -21,6 +21,7 @@ import os
 import sys
 import time
 import traceback
+from _console import use_utf8_console  # noqa: E402  控制台切 UTF-8（Linux 上常是 cp1252）
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +40,7 @@ def pixel_values(image):
 
 
 def main() -> int:
+    use_utf8_console()
     parser = argparse.ArgumentParser(description="GUI 渲染冒烟")
     parser.add_argument("--out", default=str(ROOT / ".shots"), help="截图输出目录")
     parser.add_argument("--tab", type=int, default=-1, help="只截某个标签页（0 起）")

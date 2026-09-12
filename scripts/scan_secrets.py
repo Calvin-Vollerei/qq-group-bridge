@@ -32,6 +32,8 @@ import sys
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _console import use_utf8_console  # noqa: E402  控制台切 UTF-8（Linux 上常是 cp1252）
 
 # ------------------------------------------------------------------ 规则
 
@@ -399,6 +401,7 @@ def default_targets() -> tuple[list[Path], bool]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    use_utf8_console()
     parser = argparse.ArgumentParser(description="发布前敏感信息扫描")
     parser.add_argument("targets", nargs="*", help="要扫描的目录或压缩包")
     parser.add_argument("--source", action="store_true", help="也扫源码（跳过测试夹具）")

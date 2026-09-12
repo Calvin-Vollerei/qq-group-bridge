@@ -6,6 +6,7 @@ import hashlib
 import os
 import re
 import shutil
+import sys
 import time
 from pathlib import Path
 
@@ -18,6 +19,7 @@ __all__ = [
     "free_disk_bytes",
     "now_str",
     "clamp",
+    "force_utf8_stdio",
 ]
 
 _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -26,6 +28,36 @@ _WIN_RESERVED = {
     *(f"COM{i}" for i in range(1, 10)),
     *(f"LPT{i}" for i in range(1, 10)),
 }
+
+
+def force_utf8_stdio() -> bool:
+    """把标准输出/错误切换到 UTF-8，返回是否成功。
+
+    为什么必须有：本项目的所有面向人的输出都是中文。Python 在**非交互式**
+    环境下会按区域设置选编码 —— Linux 上常是 ``cp1252``/``ascii``（容器里没设
+    ``LANG`` 时尤其如此），于是第一句 ``print("QQ群文件搬运工 …")`` 就抛：
+
+        UnicodeEncodeError: 'charmap' codec can't encode characters in position 2-7
+
+    CI 上 ``python -m qgb.dev.smoke`` 就是这么挂的（测试没关系，因为
+    unittest 的输出不含中文）。Windows 自 3.6 起控制台走 UTF-8，所以本地
+    从不复现。
+
+    ``errors="replace"`` 是兜底：万一某个字符仍编不出去，也只会显示成 ``?``，
+    而不是让整个自检脚本崩掉。
+    """
+    ok = True
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            ok = False
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            ok = False
+    return ok
 
 
 def human_size(num: float | int | None) -> str:

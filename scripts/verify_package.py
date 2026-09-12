@@ -24,6 +24,8 @@ import sys
 import time
 from ctypes import wintypes
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _console import use_utf8_console  # noqa: E402  控制台切 UTF-8（Linux 上常是 cp1252）
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -76,6 +78,7 @@ def enabling_guard() -> None:  # 占位以便阅读顺序
 
 
 def main() -> int:
+    use_utf8_console()
     parser = argparse.ArgumentParser(description="验证打包产物")
     parser.add_argument("--exe", default=str(ROOT / "dist" / "QQ群文件搬运工" / "QQGroupBridge.exe"))
     parser.add_argument("--out", default=str(ROOT / ".shots" / "packaged-window.png"))

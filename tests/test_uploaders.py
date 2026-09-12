@@ -68,16 +68,40 @@ class TestLocalUploader(BaseCase):
 
     def test_upload_creates_directory_and_content(self) -> None:
         up = LocalUploader(self._cfg(), self.secrets)
-        result = up.upload(self.local_file, up.build_remote_path(
-            group_id="123456789", filename="报告_v3.pdf"))
+        remote = up.build_remote_path(group_id="123456789", filename="报告_v3.pdf")
+        result = up.upload(self.local_file, remote)
 
         self.assertTrue(result.verified)
         self.assertEqual(result.size, len(PAYLOAD))
+        # remote_path 是**远端路径**（服务端视角），不是本地绝对路径：
+        # 与 WebDAV 等其它适配器保持一致，幂等/重试路径才不会把二者搞混。
+        self.assertEqual(result.remote_path, remote)
 
-        written = Path(result.remote_path)
+        written = Path(self._cfg().local_root) / remote.lstrip("/")
         self.assertTrue(written.is_file())
         self.assertEqual(written.read_bytes(), PAYLOAD)
         self.assertIn("123456789", str(written))
+
+    def test_upload_result_roundtrips_into_remote_size(self) -> None:
+        """**回归测试**：``upload()`` 的返回值必须能被 ``remote_size()`` 直接用。
+
+        真实教训：``upload()`` 曾返回本地**绝对**路径（``D:\\...\\x.pdf``），
+        而 ``remote_size()`` 会把它当远端路径再拼一次 ``local_root``，
+        于是 Windows 上永远查不到、返回 None（Linux 上 ``/tmp/...``
+        加前缀后恰好仍是有效路径，所以只在 Windows 暴露）。
+        上传后校验会因此永远失败。
+        """
+        up = LocalUploader(self._cfg(), self.secrets)
+        result = up.upload(self.local_file, "/QQ群备份/x.pdf")
+
+        self.assertEqual(up.remote_size(result.remote_path), len(PAYLOAD))
+        self.assertIsNone(up.remote_size("/QQ群备份/不存在.pdf"))
+
+    def test_absolute_path_outside_root_is_rejected(self) -> None:
+        """根目录之外的绝对路径必须被拒（不能因为"是绝对路径"就放行）。"""
+        up = LocalUploader(self._cfg(), self.secrets)
+        with self.assertRaises(UploadError):
+            up.remote_size(str(Path(tempfile.gettempdir()) / "definitely-outside.pdf"))
 
     def test_split_by_group_off(self) -> None:
         """关闭分群时，文件名直接落在本地根目录下。

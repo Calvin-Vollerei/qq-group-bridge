@@ -38,6 +38,8 @@ import sys
 from pathlib import Path
 
 import requests
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _console import use_utf8_console  # noqa: E402  控制台切 UTF-8（Linux 上常是 cp1252）
 
 #: 与 OpenList 驱动里完全一致的端点（别改错，改错就是另一种失败）
 ENDPOINT = "https://api.oplist.org/baiduyun/renewapi"
@@ -63,6 +65,7 @@ def _read_token(args) -> str:
 
 
 def main() -> int:
+    use_utf8_console()
     parser = argparse.ArgumentParser(description="百度网盘 refresh_token 诊断")
     parser.add_argument("--file", default="",
                         help="从文件读取令牌（避免管道编码干扰）")

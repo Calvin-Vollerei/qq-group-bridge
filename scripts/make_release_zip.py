@@ -42,6 +42,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from _console import use_utf8_console  # noqa: E402  控制台切 UTF-8（Linux 上常是 cp1252）
 from scan_secrets import scan_zip  # noqa: E402
 
 
@@ -188,6 +189,7 @@ def default_out_zip() -> Path:
 
 
 def main() -> int:
+    use_utf8_console()
     parser = argparse.ArgumentParser(description="生成可分发的发布包并扫描")
     parser.add_argument("--release-dir", default="")
     parser.add_argument("--out", default="")

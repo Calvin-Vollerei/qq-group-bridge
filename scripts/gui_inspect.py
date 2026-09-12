@@ -23,6 +23,7 @@ import argparse
 import os
 import sys
 import traceback
+from _console import use_utf8_console  # noqa: E402  控制台切 UTF-8（Linux 上常是 cp1252）
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -110,6 +111,7 @@ def walk(widget, depth: int = 0, limit: int = 4000):
 
 
 def main() -> int:
+    use_utf8_console()
     parser = argparse.ArgumentParser(description="GUI 结构检查")
     parser.add_argument("--tree", action="store_true", help="打印完整控件树")
     parser.add_argument("--tab", type=int, default=-1)

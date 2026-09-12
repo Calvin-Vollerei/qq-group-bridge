@@ -104,7 +104,11 @@ class LocalUploader(Uploader):
         if on_progress:
             on_progress(total, total)
         log.info("已投递：%s（%s）", dest.name, human_size(total))
-        return UploadResult(remote_path=str(dest), size=total, verified=True)
+        # 返回**远端路径**（服务端视角），与 uploader 接口里的其它实现一致。
+        # 曾返回 dest（绝对本地路径），结果 remote_size() 再把它当远端路径解析时
+        # 会二次拼接 local_root，Windows 上永远查不到文件（Linux 上因为
+        # "/tmp/..." 加前缀后恰好仍是有效路径而侥幸通过）。
+        return UploadResult(remote_path=remote_path, size=total, verified=True)
 
     def remote_size(self, remote_path: str) -> int | None:
         target = self._resolve(remote_path)
@@ -116,10 +120,33 @@ class LocalUploader(Uploader):
     # -------------------------------------------------- 内部
 
     def _resolve(self, remote_path: str) -> Path:
-        """把远端路径映射到本地路径，并**阻断路径穿越**。"""
-        rel = "/" + (remote_path or "").lstrip("/")
-        parts = [p for p in rel.split("/") if p and p not in (".", "..")]
+        """把远端路径映射到本地路径，并**阻断路径穿越**。
+
+        同时接受两种写法：
+          * 远端路径 ``/群目录/文件.pdf`` —— 正常调用方传的
+          * **已在本根目录内**的绝对路径 —— ``upload()`` 历史上返回过这种值，
+            幂等/重试路径会把它再传进来；不特殊处理就会二次拼接 local_root。
+        指向根目录之外的绝对路径一律拒绝。
+        """
         root = self.root.resolve()
+        raw = str(remote_path or "")
+
+        if raw:
+            candidate = Path(raw)
+            if candidate.is_absolute() or candidate.drive:
+                try:
+                    resolved = candidate.resolve()
+                except OSError:
+                    resolved = candidate
+                if resolved == root or root in resolved.parents:
+                    return candidate
+                raise UploadError(
+                    f"拒绝越界路径：{candidate.name}",
+                    hint="目标路径不在本地根目录内，已被安全拦截。",
+                )
+
+        rel = "/" + raw.lstrip("/")
+        parts = [p for p in rel.split("/") if p and p not in (".", "..")]
         candidate = root.joinpath(*parts)
         resolved = candidate.resolve()
         if root != resolved and root not in resolved.parents:

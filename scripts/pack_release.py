@@ -38,6 +38,7 @@ import os
 import re
 import sys
 import zipfile
+from _console import use_utf8_console  # noqa: E402  控制台切 UTF-8（Linux 上常是 cp1252）
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -235,6 +236,7 @@ def build(base_zip: Path, napcat_dir: Path, out_zip: Path, *, with_napcat: bool)
 
 
 def main(argv: list[str] | None = None) -> int:
+    use_utf8_console()
     parser = argparse.ArgumentParser(description="生成 GitHub 发布用的整包 zip")
     parser.add_argument("--version", default="v1.0", help="版本号，用于文件名（默认 v1.0）")
     parser.add_argument("--base-zip", default=str(DEFAULT_BASE_ZIP), help="主程序分发包路径")

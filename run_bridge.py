@@ -26,6 +26,34 @@ from pathlib import Path
 from typing import TextIO
 
 
+def _use_utf8_console() -> bool:
+    """把控制台切到 UTF-8（本脚本的提示全是中文）。
+
+    Linux/容器里非交互式 stdout 常是 cp1252，中文一 print 就抛
+    ``UnicodeEncodeError``；Windows 控制台自 3.6 起走 UTF-8，所以只在
+    别的平台复现。实现在 ``qgb.utils.force_utf8_stdio``，这里做一层
+    容错包装：连 qgb 都导入不了时也要能继续跑（--help、自检等）。
+    """
+    _ensure_package_on_path()
+    try:
+        from qgb.utils import force_utf8_stdio  # noqa: PLC0415
+
+        return force_utf8_stdio()
+    except Exception:  # noqa: BLE001
+        ok = True
+        for name in ("stdout", "stderr"):
+            stream = getattr(sys, name, None)
+            reconfigure = getattr(stream, "reconfigure", None)
+            if reconfigure is None:
+                ok = False
+                continue
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                ok = False
+        return ok
+
+
 def _ensure_package_on_path() -> None:
     """支持从任意工作目录启动（打包后由 PyInstaller 处理）。"""
     if getattr(sys, "frozen", False):
@@ -205,6 +233,7 @@ def _run_selftest(out_path: Path | None = None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _use_utf8_console()
     parser = argparse.ArgumentParser(
         prog="QQGroupBridge",
         description="把指定 QQ 群的新文件自动抓取、过滤并上传到网盘",

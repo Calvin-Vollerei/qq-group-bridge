@@ -20,6 +20,8 @@ import os
 import struct
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _console import use_utf8_console  # noqa: E402  控制台切 UTF-8（Linux 上常是 cp1252）
 
 MACHINE_TYPES = {0x014C: "x86(32位)", 0x8664: "x64(64位)", 0xAA64: "ARM64"}
 
@@ -101,6 +103,7 @@ def find_dll(name: str, search_dirs: list[Path]) -> Path | None:
 
 
 def main() -> int:
+    use_utf8_console()
     parser = argparse.ArgumentParser(description="PE 依赖自查")
     parser.add_argument("targets", nargs="+")
     parser.add_argument("--recursive", action="store_true",
