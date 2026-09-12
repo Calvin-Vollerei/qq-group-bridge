@@ -1,0 +1,31 @@
+# 统一换行符，避免「LF 将被替换为 CRLF」刷屏，也避免跨平台差异把 diff 搞乱。
+# 仓库内统一 LF；Windows 专用的 .bat / .ps1 保持 CRLF（否则 cmd 可能执行异常）。
+* text=auto
+
+*.py    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.toml  text eol=lf
+*.spec  text eol=lf
+.gitignore     text eol=lf
+.gitattributes text eol=lf
+
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# 二进制（明确声明，避免被当成文本处理）
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.exe   binary
+*.dll   binary
+*.pyd   binary
+*.zip   binary
+*.db    binary
+*.enc   binary
