@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import glass, themes
+from .backdrop import BackdropPainter
 from .widgets import LogView, StatusBadge, ToastHost
 
 log = logging.getLogger(__name__)
@@ -126,7 +127,14 @@ class Shell(QMainWindow):
         self.frameless = self.capability.requires_frameless
         if self.frameless:
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
-            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        # ⚠️ 无论哪条路线都要开 WA_TranslucentBackground：
+        #    自绘路线需要它来画圆角；原生路线也需要它，因为**客户区**由我们自己
+        #    绘制模糊背景（Qt 在 Windows 上无法把 DWM 材质透到客户区，
+        #    不开这个属性客户区会被填成纯黑 —— 正是用户看到的"死黑"）。
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        # 自绘毛玻璃背景：截图→模糊→当背景画（见 backdrop.py 的说明）
+        self.backdrop = BackdropPainter(self, blur=16.0, darken=0.55)
 
         # ⚠️ bridge 必须在 _build_ui() **之前**创建：页面在构造时就会取它
         #    （Page.__init__ 里 self.bridge = shell.bridge），否则报
@@ -143,6 +151,29 @@ class Shell(QMainWindow):
 
         self.apply_theme(self.theme_key)
         QTimer.singleShot(0, self._apply_glass)     # 等窗口有 HWND 后再上材质
+        QTimer.singleShot(120, self.backdrop.start)  # 等窗口真正显示后再截图
+
+    # ------------------------------------------------------------ 背景绘制
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        """先画模糊背景，再画圆角遮罩（自绘路线需要圆角）。"""
+        from PySide6.QtGui import QPainter, QPainterPath
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        try:
+            self.backdrop.paint(painter)
+            if self.frameless:
+                # 无边框模式下把四角削圆（原生路线由 DWM 自己给圆角）
+                path = QPainterPath()
+                path.addRoundedRect(0, 0, self.width(), self.height(), 16, 16)
+                painter.setCompositionMode(
+                    QPainter.CompositionMode.CompositionMode_DestinationIn
+                )
+                painter.fillPath(path, Qt.GlobalColor.black)
+        finally:
+            painter.end()
+
 
     # ------------------------------------------------------------ 构建
 
@@ -152,15 +183,19 @@ class Shell(QMainWindow):
         # 原生材质模式下**绝不能**让中央控件画实底：那会盖住 DWM 材质
         # （实测现象：只有最顶部标题栏那条模糊，主内容区是黑的）。
         root.setAutoFillBackground(False)
-        if not self.frameless:
-            root.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        # 中央控件必须**完全透明**：窗口背景由 backdrop 在 paintEvent 里绘制，
+        # 这里一旦不透明，用户看到的就是"死黑"（实测踩过两次）。
+        root.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        root.setAutoFillBackground(False)
         self.setCentralWidget(root)
 
         outer = QVBoxLayout(root)
-        # 系统边框模式下不需要外边距（窗口已经有边框）；
-        # 无边框模式下也不能留边距 —— 那 10px 会露出窗口的透明底，看起来是一圈黑边。
-        outer.setContentsMargins(0, 0, 0, 0)
+        # 窗口背景由我们自己画，这里留 10px 内边距让内容不贴边
+        outer.setContentsMargins(10, 10, 10, 10)
         outer.setSpacing(8)
+
+        # 移动/缩放后自动重拍背景（防抖在 BackdropPainter 内部）
+        self.installEventFilter(self.backdrop)
 
         # ---- 标题栏（自绘）
         bar = QHBoxLayout()
@@ -270,6 +305,14 @@ class Shell(QMainWindow):
                 page.on_theme_changed(palette)
             except Exception:  # noqa: BLE001
                 log.debug("页面主题回调失败", exc_info=True)
+
+        # 自绘背景的暗化程度跟着主题走：夜间压暗一些保证文字可读，
+        # 日间保持通透（用户要的是"高透明"）
+        try:
+            self.backdrop.darken = 0.62 if palette.is_dark else 0.34
+            self.backdrop.refresh()
+        except Exception:  # noqa: BLE001
+            pass
 
         # 原生材质要跟着明暗走
         try:
@@ -439,6 +482,10 @@ class Shell(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802
         try:
             self.bridge.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.backdrop.stop()      # 停掉截图定时器
         except Exception:  # noqa: BLE001
             pass
         super().closeEvent(event)
