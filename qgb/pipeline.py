@@ -122,6 +122,12 @@ class Pipeline:
         #: 上一轮还没跑完就又点「立即刷新」，会让同一个群被重复枚举、
         #: 同一批文件被重复登记（用户实测反馈过重复搬运）。
         self._busy = threading.Event()
+        #: 每群「(文件名, 大小) -> 当前 file_id」的缓存，**每轮清空**。
+        #: 为什么需要：transfers 里的 file_id 是登记时固定的，而群文件的 file_id
+        #: 会随会话变化（实测：待处理项按 file_id 命中率 0%，按文件名命中 50-100%）。
+        #: 用旧 id 取直链会失败（NapCat 报 fileUUID not found），所以下载前
+        #: 用名字+大小从**当前**群列表里解析出有效 id。
+        self._id_cache: dict[str, tuple[dict[tuple[str, int], str], bool]] = {}
         #: 群号 → 群名。取自 OneBot 的 get_group_list，用于「用群名做目录名」
         #: 这类型号；取不到就退回群号，绝不因此中断搬运。
         self._group_names: dict[str, str] = {}
@@ -312,6 +318,7 @@ class Pipeline:
             self.stats.started_at = time.time()
         # 本轮新发现计数：每轮清零，供界面显示'本次扫描发现几个新文件'
         self.stats.new_last_cycle = 0
+        self._id_cache.clear()          # 群文件 id 每轮重新解析
 
         before = self._counters()
 
@@ -508,6 +515,40 @@ class Pipeline:
                 name=row["name"],
             )
 
+    def _live_file_id(self, gf: GroupFile) -> tuple[str, bool]:
+        """解析该文件**当前**有效的 file_id。
+
+        返回 ``(file_id, 列表可用)``：
+
+        * ``file_id`` 非空 → 用这个 id 取直链；
+        * ``file_id`` 为空且 ``列表可用`` 为真 → 群列表里确实没有它（已删除/改名）；
+        * ``file_id`` 为空但 ``列表可用`` 为假 → **遍历失败**，不能断定文件不存在，
+          此时应保守跳过（当作临时故障），避免误杀真实文件。
+
+        ⚠️ "列表可用"这个标志是必要的：`walk_group_files` 可能因网络/接口异常
+        半途返回，若只看到"没找到"就判定文件被删，会把仍在群里的文件永久跳过。
+        """
+        cached = self._id_cache.get(gf.group_id)
+        if cached is None:
+            table: dict[tuple[str, int], str] = {}
+            ok = True
+            try:
+                for f in self.client.walk_group_files(
+                    gf.group_id,
+                    recursive=self.cfg.monitor.recursive_folders,
+                    page_size=self.cfg.monitor.page_size,
+                ):
+                    table.setdefault((f.name, int(f.size or 0)), str(f.file_id))
+                if not table:
+                    ok = False          # 一个都没拿到：多半是接口异常，不能当"文件都没有"
+            except Exception as exc:  # noqa: BLE001 - 解析失败不该中断整轮
+                log.debug("解析群 %s 的文件列表失败：%s", gf.group_id, exc)
+                ok = False
+            cached = (table, ok)
+            self._id_cache[gf.group_id] = cached
+        table, ok = cached
+        return table.get((gf.name, int(gf.size or 0)), ""), ok
+
     def _process_row(self, row: dict[str, Any]) -> None:
         gf = GroupFile(
             group_id=row["group_id"],
@@ -542,6 +583,56 @@ class Pipeline:
             self.store.mark(key, TransferState.DOWNLOADING, local_path=str(local_path))
             self._emit("log", f"开始下载：{gf.name}（{human_size(gf.size)}）",
                        group_id=gf.group_id, name=gf.name)
+
+            # 取直链前先确认 file_id 是**当前**有效的：transfers 里存的是登记时的值，
+            # 而群文件的 id 会变（实测：待处理项按 file_id 命中率 0%、按文件名 50-100%，
+            # 用旧 id 取直链 100% 失败）。所以这里用名字+大小解析出当前 id。
+            live_id, listing_ok = self._live_file_id(gf)
+            if live_id and int(row.get("absent_count") or 0):
+                self.store.mark(gf.key, TransferState.DISCOVERED, reset_absent=True)
+            if live_id and live_id != gf.file_id:
+                log.info("文件 %s 的 file_id 已变化，改用当前值", gf.name)
+                self.store.set_file_id(gf.key, live_id)
+                gf = GroupFile(group_id=gf.group_id, file_id=live_id, name=gf.name,
+                               size=gf.size, busid=gf.busid)
+                key = gf.key
+                row = dict(row)
+                row["file_id"] = live_id
+            elif not live_id:
+                if listing_ok:
+                    # 列表完整且确实没有它。连续几次都确认不到就判定"已失效"，
+                    # 不再无限重试 —— 否则被删除的历史记录会永远占着队列
+                    #（用户明确要求"不要累加"）。
+                    absent = int(row.get("absent_count") or 0) + 1
+                    limit = int(getattr(self.cfg.monitor, "absent_limit", 3))
+                    if absent >= limit:
+                        self.store.mark(
+                            gf.key, TransferState.EXPIRED,
+                            error=f"群文件列表里已找不到该文件（连续 {absent} 次确认）",
+                            bump_absent=True, reset_absent=True,
+                        )
+                        self.stats.skipped += 1
+                        self._emit(
+                            "log",
+                            f"已失效（群内已无此文件，不再重试）：{gf.name}",
+                            level="warning",
+                            group_id=gf.group_id,
+                            name=gf.name,
+                        )
+                        return
+                    self.store.mark(gf.key, TransferState.DISCOVERED,
+                                    bump_absent=True, retry_after=60.0)
+                    raise TransientError(
+                        f"群文件列表里已找不到「{gf.name}」"
+                        f"（第 {absent}/{limit} 次确认，可能已被删除或改名）",
+                        hint="稍后再确认一次；连续几次都找不到就会标记为「已过期」，"
+                             "不再占用队列。",
+                    )
+                # 列表没取全：不能断定文件不存在，保守当作临时故障
+                raise TransientError(
+                    f"暂时无法核对「{gf.name}」是否仍在群里（群文件列表未取全）",
+                    hint="稍后会自动重试；若持续出现，请重启一次 QQ 组件。",
+                )
 
             url = self.client.get_group_file_url(gf.group_id, gf.file_id, gf.busid)
 

@@ -122,6 +122,9 @@ class StateStore:
         #: 实测踩过：几十条旧记录每轮都失败且不消耗重试次数，队首永远被它们占着，
         #: 新文件一直轮不到 —— 用户看到的就是"下载始终不开始"。
         ("transfers", "retry_at", "REAL NOT NULL DEFAULT 0"),
+        #: 连续多少次"完整列表里确实没有这个文件"。达到上限就标记为已失效，
+        #: 不再无限重试 —— 否则被删除的历史记录会永远占着队列（用户明确要求不要累加）。
+        ("transfers", "absent_count", "INTEGER NOT NULL DEFAULT 0"),
     )
 
     def _migrate(self) -> None:
@@ -282,6 +285,52 @@ class StateStore:
             TransferState.UPLOADED.value,
         )
 
+    def current_file_id(self, group_id: str, name: str, size: int) -> str:
+        """从 ``files`` 表取该文件**当前**的 file_id（按 群+名+大小 匹配）。
+
+        ``files`` 表每次扫描都会 upsert 刷新，而 ``transfers`` 里的 file_id
+        是登记那一刻固定的 —— 两者会不同步：同一文件在群里换过一次 file_id 后，
+        transfers 里仍是旧值，取直链就会失败（NapCat 报 fileUUID not found）。
+        这里优先用 files 表里的新值。
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT file_id FROM files WHERE group_id=? AND name=? AND size=? "
+                "ORDER BY last_seen DESC LIMIT 1",
+                (str(group_id), str(name), int(size)),
+            )
+            row = cur.fetchone()
+            return str(row["file_id"]) if row else ""
+
+    def set_file_id(self, key: tuple[str, int, str], new_file_id: str) -> bool:
+        """把 transfer 行的 file_id 换成当前有效值（主键的一部分，需重建行）。
+
+        主键是 (group_id, busid, file_id)，改 file_id 等于换一行：先把旧行搬到
+        新主键下（保留状态、attempts、排序、置顶），再删除旧行。若新主键已存在
+        则直接删掉旧行（避免主键冲突）。
+        """
+        old = (str(key[0]), int(key[1]), str(key[2]))
+        new = (old[0], old[1], str(new_file_id))
+        if old == new:
+            return False
+        with self._write() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM transfers WHERE group_id=? AND busid=? AND file_id=?",
+                new,
+            ).fetchone()
+            if exists:
+                conn.execute(
+                    "DELETE FROM transfers WHERE group_id=? AND busid=? AND file_id=?", old
+                )
+            else:
+                conn.execute(
+                    "UPDATE transfers SET file_id=?, updated_at=? "
+                    "WHERE group_id=? AND busid=? AND file_id=?",
+                    (new[2], time.time(), old[0], old[1], old[2]),
+                )
+            conn.commit()
+        return True
+
     def is_uploaded_like(self, group_id: str, name: str, size: int) -> bool:
         """按 **(群, 文件名, 大小)** 判断是否已搬过。
 
@@ -343,6 +392,8 @@ class StateStore:
         error: str | None = None,
         bump_attempts: bool = False,
         retry_after: float | None = None,
+        bump_absent: bool = False,
+        reset_absent: bool = False,
     ) -> None:
         sets = ["state=?", "updated_at=?"]
         params: list[Any] = [state.value, time.time()]
@@ -360,6 +411,10 @@ class StateStore:
             params.append(error)
         if bump_attempts:
             sets.append("attempts=attempts+1")
+        if bump_absent:
+            sets.append("absent_count=absent_count+1")
+        if reset_absent:
+            sets.append("absent_count=0")
         if retry_after is not None:
             # 冷却：这段时间内不把它排进待处理队列（见 pending_ordered）
             sets.append("retry_at=?")
