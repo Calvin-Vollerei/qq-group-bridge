@@ -269,6 +269,13 @@ class MonitorPage(Page):
         self.summary.setText(f"已上传 {bytes_text}　运行时长 {hours} 小时 {minutes} 分")
 
 
+def _advanced(shell):
+    """懒加载「高级」页（含模糊模式切换）。"""
+    from .page_advanced import AdvancedPage
+
+    return AdvancedPage(shell)
+
+
 def factories() -> list:
     """返回按顺序创建页面的可调用对象列表。
 
@@ -282,6 +289,5 @@ def factories() -> list:
                                       "将支持：NapCat 托管、二维码登录、组件安装与状态。"),
         lambda shell: PlaceholderPage(shell, "网盘与凭据",
                                       "将支持：WebDAV 地址与凭据、连接测试、远端目录。"),
-        lambda shell: PlaceholderPage(shell, "高级",
-                                      "将支持：轮询间隔、重试与退避、卡死阈值、清理与维护。"),
+        lambda shell: _advanced(shell),
     ]

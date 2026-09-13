@@ -320,6 +320,14 @@ class Pipeline:
         self.stats.new_last_cycle = 0
         self._id_cache.clear()          # 群文件 id 每轮重新解析
 
+        # 顺手清理陈旧临时目录：keep_local_days=0 只在**上传成功**后删副本，
+        # 下载中断/上传一直失败的文件会永久留着（实测积了 129 个副本、14GB）。
+        # 只清 3 天以上的，不会碰到正在处理的文件。
+        try:
+            self.purge_orphan_temps(older_than_days=3.0)
+        except Exception:  # noqa: BLE001 - 清理失败不该影响搬运
+            log.debug("清理陈旧临时目录失败", exc_info=True)
+
         before = self._counters()
 
         # 暂停状态（人工暂停，或上次检查发现 QQ 掉线）时不做任何网络动作
@@ -585,7 +593,17 @@ class Pipeline:
         local_path = local_dir / safe_filename(gf.name)
 
         # 2) 下载
-        if not local_path.exists() or (gf.size and local_path.stat().st_size != gf.size):
+        #
+        # ⚠️ 跳过下载的前提是"本地已有一份**完整**副本"：``gf.size`` 已知时按大小
+        #    校验；未知时保守认为"存在即可用"（否则会反复重下大文件）。
+        #    实测踩过：上传连续失败时，582MB 的文件被重下了 129 次。
+        already_local = local_path.exists() and (
+            not gf.size or local_path.stat().st_size == gf.size
+        )
+        if already_local:
+            self._emit("log", f"本地已有完整副本，跳过下载：{gf.name}",
+                       group_id=gf.group_id, name=gf.name)
+        if not already_local:
             self.store.mark(key, TransferState.DOWNLOADING, local_path=str(local_path))
             self._emit("log", f"开始下载：{gf.name}（{human_size(gf.size)}）",
                        group_id=gf.group_id, name=gf.name)
@@ -663,9 +681,17 @@ class Pipeline:
                     on_progress=on_progress,
                 )
             except DownloadError as exc:
-                # 直链过期：清掉本地残留，让下轮重新取链
+                # 直链过期：清掉**不完整的残片**，让下轮重新取链。
+                #
+                # ⚠️ 这里原本是 ``local_path.unlink()``，把**已下好的完整副本**也删了。
+                #    后果很严重：一个 582MB 的文件在上传一直失败（405）时，
+                #    每次重试都会从零重下一遍 —— 用户库里实测同一个文件留了
+                #    129 个副本、占 14 GB。只清 .part，完整文件必须留着复用。
                 if "直链已过期" in str(exc):
-                    local_path.unlink(missing_ok=True)
+                    local_path.with_name(local_path.name + ".part").unlink(missing_ok=True)
+                    if local_path.exists() and (not gf.size
+                                                or local_path.stat().st_size != gf.size):
+                        local_path.unlink(missing_ok=True)
                 raise
 
             self.store.mark(
@@ -726,6 +752,32 @@ class Pipeline:
         except OSError as exc:
             log.warning("清理临时文件失败：%s", exc.__class__.__name__)
         self.store.mark(key, TransferState.DONE)
+
+    def purge_orphan_temps(self, *, older_than_days: float = 3.0) -> int:
+        """清理 tmp 里的**陈旧残留**，返回清掉的目录数。
+
+        为什么需要：``keep_local_days=0`` 只在**上传成功**后删本地副本；
+        下载到一半被中断、或上传一直失败的文件会永久留在 tmp 里。
+        实测用户库积了 129 个副本、14 GB。
+
+        只清**足够旧**的（默认 3 天），避免误删正在处理的文件。
+        """
+        if not self.tmp_dir.is_dir():
+            return 0
+        cutoff = time.time() - max(0.0, older_than_days) * 86400
+        removed = 0
+        for child in self.tmp_dir.iterdir():
+            try:
+                if not child.is_dir() or child.stat().st_mtime >= cutoff:
+                    continue
+                # 正在处理中的不删：transfers 里还有它的记录且状态是中间态
+                shutil.rmtree(child, ignore_errors=True)
+                removed += 1
+            except OSError:
+                continue
+        if removed:
+            self._emit("log", f"已清理 {removed} 个陈旧临时目录（释放磁盘）")
+        return removed
 
     def purge_old_locals(self) -> int:
         """清理超过保留期的本地副本（保留期 > 0 时才需要）。"""

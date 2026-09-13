@@ -242,8 +242,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default="", help="把自检报告写入该文件（窗口模式必需）")
     parser.add_argument("--version", action="store_true", help="显示版本信息")
     parser.add_argument(
-        "--ui", choices=("tk", "qt"), default="",
-        help="选择界面实现：tk=旧界面（默认），qt=毛玻璃新界面（PySide6）",
+        "--ui", choices=("tk", "qt"), default="qt",
+        help="选择界面实现：qt=毛玻璃新界面（默认，PySide6），tk=旧界面（回退用）",
     )
     args = parser.parse_args(argv)
 
@@ -267,12 +267,19 @@ def main(argv: list[str] | None = None) -> int:
         return _run_selftest(out)
 
     # 界面选择：--ui qt 走 PySide6 毛玻璃界面；默认仍是 Tk（迁移期可随时回退）
+    # 默认走 Qt 新界面；PySide6 不可用时**自动回退**到 Tk 旧界面，
+    # 保证任何环境下双击 exe 都能开出界面。
     use_qt = args.ui == "qt"
-    if not use_qt:
+    if use_qt:
         try:
             import PySide6  # noqa: F401
         except ImportError:
-            pass
+            try:
+                print("未安装 PySide6，回退到旧界面（pip install PySide6 可启用新界面）",
+                      file=sys.stderr)
+            except Exception:
+                pass
+            use_qt = False
     if use_qt:
         try:
             from qgb.qt.app import main as qt_main

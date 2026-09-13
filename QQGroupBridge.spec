@@ -10,6 +10,10 @@
 * **不打包任何凭据 / 配置 / NapCat 二进制** —— 分发包保持"零凭据"，
   QQ 组件由用户在界面里按向导安装。
 * **排除开发与测试代码** —— ``tests`` / ``qgb.dev`` 不进发布包。
+* **PySide6 只带必需模块** —— 新界面（``qgb/qt``）只用到 QtCore/QtGui/QtWidgets。
+  PySide6 安装目录近 190MB，其中 WebEngine/Qt3D/QtMultimedia 等占了绝大部分；
+  不排除的话发布包会从 52MB 涨到 200MB+。这里按模块名精确排除，
+  并保留 Qt 的 windows 平台插件（缺了它界面根本起不来）。
 
 构建入口：``scripts/build.ps1``（它会先跑测试与扫密再调用本文件）。
 """
@@ -21,10 +25,14 @@ ROOT = Path(SPECPATH).resolve()  # noqa: F821  (SPECPATH 由 PyInstaller 注入)
 # ---------------------------------------------------------------- 隐式依赖
 
 hiddenimports = [
-    # Pillow 与 tkinter 配合显示 QR 图时必需
+    # Pillow 与 tkinter 配合显示 QR 图时必需（旧 Tk 界面仍在）
     "PIL._tkinter_finder",
     "PIL.Image",
     "PIL.ImageTk",
+    # PySide6 新界面用到的三个模块（显式列出，避免被分析漏掉）
+    "PySide6.QtCore",
+    "PySide6.QtGui",
+    "PySide6.QtWidgets",
 ]
 
 # ---------------------------------------------------------------- 排除项
@@ -50,6 +58,50 @@ excludes = [
     "pip",
     "wheel",
     "PyInstaller",
+    # ==== Qt 里用不到的重型模块（不排除会让包涨到 200MB+）====
+    # 新界面只用 QtCore/QtGui/QtWidgets，以下全部排除。
+    "PySide6.QtWebEngineCore",
+    "PySide6.QtWebEngineWidgets",
+    "PySide6.QtWebEngineQuick",
+    "PySide6.QtWebChannel",
+    "PySide6.QtWebSockets",
+    "PySide6.QtQml",
+    "PySide6.QtQuick",
+    "PySide6.QtQuick3D",
+    "PySide6.QtQuickWidgets",
+    "PySide6.QtQuickControls2",
+    "PySide6.Qt3DCore",
+    "PySide6.Qt3DRender",
+    "PySide6.Qt3DAnimation",
+    "PySide6.Qt3DExtras",
+    "PySide6.QtCharts",
+    "PySide6.QtDataVisualization",
+    "PySide6.QtGraphs",
+    "PySide6.QtMultimedia",
+    "PySide6.QtMultimediaWidgets",
+    "PySide6.QtBluetooth",
+    "PySide6.QtNfc",
+    "PySide6.QtPositioning",
+    "PySide6.QtLocation",
+    "PySide6.QtSerialPort",
+    "PySide6.QtSerialBus",
+    "PySide6.QtSql",
+    "PySide6.QtTest",
+    "PySide6.QtDesigner",
+    "PySide6.QtHelp",
+    "PySide6.QtUiTools",
+    "PySide6.QtOpenGL",
+    "PySide6.QtOpenGLWidgets",
+    "PySide6.QtPdf",
+    "PySide6.QtPdfWidgets",
+    "PySide6.QtSvgWidgets",
+    "PySide6.QtSpatialAudio",
+    "PySide6.QtRemoteObjects",
+    "PySide6.QtScxml",
+    "PySide6.QtSensors",
+    "PySide6.QtStateMachine",
+    "PySide6.QtTextToSpeech",
+    # 注意：shiboken6 是 PySide6 的必需运行时，**不能**排除
     # 其他无关项
     "test",
     "lib2to3",
