@@ -281,11 +281,45 @@ class MonitorTab(Tab):
                         command=on_sort).pack(side="left", padx=(12, 0))
 
         ttk.Label(top, text="  搜索：", style="CardMuted.TLabel").pack(side="left")
-        entry = ttk.Entry(top, textvariable=search_var, width=26)
+        entry = ttk.Entry(top, textvariable=search_var, width=22)
         entry.pack(side="left")
         entry.bind("<KeyRelease>", lambda _e: refresh())
         ttk.Button(top, text="✕", width=3, style="Ghost.TButton",
                    command=lambda: (search_var.set(""), refresh())).pack(side="left", padx=(4, 0))
+
+        # ---------------- 第二行：筛选（状态 / 群聊 / 大小）
+        filt = ttk.Frame(win, padding=(12, 0, 12, 4))
+        filt.pack(fill="x")
+
+        status_var = tk.StringVar(value="全部")
+        group_var = tk.StringVar(value="全部")
+        size_var = tk.StringVar(value="全部")
+
+        ttk.Label(filt, text="筛选：状态", style="CardMuted.TLabel").pack(side="left")
+        status_box = ttk.Combobox(filt, textvariable=status_var, width=10, state="readonly",
+                                  values=("全部", "待处理", "下载中", "上传中", "已完成",
+                                          "失败", "已过滤"))
+        status_box.pack(side="left", padx=(4, 12))
+        status_box.bind("<<ComboboxSelected>>", lambda _e: refresh())
+
+        ttk.Label(filt, text="群聊", style="CardMuted.TLabel").pack(side="left")
+        group_box = ttk.Combobox(filt, textvariable=group_var, width=14, state="readonly",
+                                 values=("全部",))
+        group_box.pack(side="left", padx=(4, 12))
+        group_box.bind("<<ComboboxSelected>>", lambda _e: refresh())
+
+        ttk.Label(filt, text="大小", style="CardMuted.TLabel").pack(side="left")
+        size_box = ttk.Combobox(filt, textvariable=size_var, width=14, state="readonly",
+                                values=("全部", "< 1 MB", "1–10 MB", "10–100 MB", "≥ 100 MB"))
+        size_box.pack(side="left", padx=(4, 12))
+        size_box.bind("<<ComboboxSelected>>", lambda _e: refresh())
+
+        ttk.Button(filt, text="⤒ 优先执行筛选结果", style="Accent.TButton",
+                   command=lambda: prioritize()).pack(side="left")
+        ttk.Button(filt, text="清除筛选", style="Ghost.TButton",
+                   command=lambda: (search_var.set(""), status_var.set("全部"),
+                                    group_var.set("全部"), size_var.set("全部"),
+                                    refresh())).pack(side="left", padx=(8, 0))
 
         ttk.Label(win,
                   text="在搜索框输入文件名/群号即可筛选。★置顶与 ↑↓ 只对「待处理」的文件生效"
@@ -341,8 +375,39 @@ class MonitorTab(Tab):
             g, b, f = raw.split("\x1f")
             return (g, int(b), f), sel[0]
 
+        def size_match(row) -> bool:
+            bucket = size_var.get()
+            if bucket == "全部":
+                return True
+            mb = int(row.get("size") or 0) / 1048576
+            if bucket == "< 1 MB":
+                return mb < 1
+            if bucket == "1–10 MB":
+                return 1 <= mb < 10
+            if bucket == "10–100 MB":
+                return 10 <= mb < 100
+            if bucket == "≥ 100 MB":
+                return mb >= 100
+            return True
+
         def refresh(keep: str | None = None) -> None:
-            rows = self.controller.list_files(search=search_var.get(), limit=2000)
+            rows = self.controller.list_files(search=search_var.get(), limit=5000)
+
+            # 群聊下拉：按当前数据自动填充（不写死，避免与配置里的群号脱节）
+            groups = sorted({str(r.get("group_id", "")) for r in rows if r.get("group_id")})
+            want = ["全部"] + [_mask_group(g) for g in groups]
+            if list(group_box["values"]) != want:
+                group_box["values"] = want
+
+            want_status = status_var.get()
+            want_group = group_var.get()
+            if want_status != "全部":
+                rows = [r for r in rows
+                        if state_label.get(str(r.get("state", "")), "") == want_status]
+            if want_group != "全部":
+                rows = [r for r in rows
+                        if _mask_group(str(r.get("group_id", ""))) == want_group]
+            rows = [r for r in rows if size_match(r)]
             col = sort_col.get()
             desc = bool(sort_desc.get())
 
@@ -393,7 +458,31 @@ class MonitorTab(Tab):
                     tree.selection_set(item)
                     tree.see(item)
             pending_n = sum(1 for r in rows if r.get("state") == TransferState.DISCOVERED.value)
-            info.configure(text=f"共 {len(rows)} 项，其中待处理 {pending_n} 项")
+            info.configure(text=f"筛选后 {len(rows)} 项，其中待处理 {pending_n} 项"
+                                f"（选中一行可置顶/上下移；也可用上方「优先执行筛选结果」）")
+
+        def prioritize() -> None:
+            """把**当前筛选结果里的待处理项**按显示顺序提到队首。
+
+            置顶项保持最前不动；已是待处理以外的状态（已完成/失败等）会自动跳过 ——
+            它们没有队列位置。搬完一批后可以再筛再优先，实现"分批推进"。
+            """
+            keys: list[tuple[str, int, str]] = []
+            for item in tree.get_children():
+                vals = tree.item(item, "values")
+                raw = str(vals[-1])
+                if not raw:
+                    continue
+                g, b, f = raw.split("\x1f")
+                if state_label.get(str(vals[5]), "") != "待处理":
+                    continue
+                keys.append((g, int(b), f))
+            if not keys:
+                self.toast("当前筛选结果里没有「待处理」的文件", "info")
+                return
+            moved = self.controller.prioritize_filtered(keys)
+            self.toast(f"已把 {moved} 个文件排到队列前面，会优先搬运", "success")
+            refresh()
 
         def act(fn) -> None:
             key, item = selected_key()
@@ -403,16 +492,24 @@ class MonitorTab(Tab):
             row = next((r for r in self.controller.list_files(search=search_var.get(), limit=2000)
                         if (str(r["group_id"]), int(r["busid"]), str(r["file_id"])) == key), None)
             if row is not None and row.get("state") != TransferState.DISCOVERED.value:
-                self.toast("这一项不是「待处理」，无法调整队列位置"
-                           "（失败项请先点「重试失败项」）", "info")
+                label = state_label.get(str(row.get("state", "")), str(row.get("state", "")))
+                self.toast(f"这一项状态是「{label}」，不是「待处理」，没有队列位置。"
+                           "失败项请先点「重试失败项」把它变回待处理。", "info")
                 return
             try:
                 changed = fn(key)
             except Exception as exc:  # noqa: BLE001 - 界面动作不许把窗口带崩
-                self.toast(f"操作失败：{type(exc).__name__}", "error")
+                self.toast(f"操作失败：{type(exc).__name__}: {exc}", "error")
                 return
             if not changed:
-                self.toast("已经到边界了，或该项不支持该操作", "info")
+                # 说清"到哪条边界"，别再让用户猜（原来只有一句笼统的"已经到边界了"）
+                queue_keys = {f"{r['group_id']}\x1f{r['busid']}\x1f{r['file_id']}"
+                              for r in self.controller.queue_ordered(limit=5000)}
+                if f"{key[0]}\x1f{key[1]}\x1f{key[2]}" not in queue_keys:
+                    self.toast("这一项不在待处理队列里（可能刚被搬走或状态已变），"
+                               "点「🔄 刷新」后重试", "warning")
+                else:
+                    self.toast("已经在队首/队尾，或不能跨越置顶边界", "info")
             refresh(keep=f"{key[0]}\x1f{key[1]}\x1f{key[2]}")
 
         ttk.Button(bottom, text="★ 置顶", style="Accent.TButton",

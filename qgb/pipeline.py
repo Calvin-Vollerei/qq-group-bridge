@@ -26,6 +26,7 @@ from typing import Any, Callable
 from .config import AppConfig
 from .downloader import Downloader, DownloadProgress
 from .errors import DownloadError, NapCatError, QgbError, UploadError
+from .errors import TransientError  # noqa: E402
 from .filters import CompiledFilters, compile_filters
 from .models import GroupFile, TransferState
 from .naming import resolve_group_folder
@@ -408,8 +409,24 @@ class Pipeline:
 
     def _handle_failure(self, row: dict[str, Any], exc: QgbError) -> None:
         key = (row["group_id"], int(row["busid"]), str(row["file_id"]))
-        attempts = int(row.get("attempts") or 0) + 1
         message = getattr(exc, "message", str(exc))
+
+        # 临时性故障（例如 NapCat 的 fileUUID 未就绪）：退回待处理、
+        # **不 +1 重试次数**，稍后自然重试。否则一次组件状态抖动就会把
+        # 整批文件永久标成「失败」，用户看到的是"任务不推进"。
+        if isinstance(exc, TransientError):
+            self.store.mark(key, TransferState.DISCOVERED, error=message)
+            self._emit(
+                "log",
+                f"暂时跳过（稍后自动重试）：{row['name']} —— {message}",
+                level="warning",
+                group_id=row["group_id"],
+                name=row["name"],
+                hint=getattr(exc, "hint", ""),
+            )
+            return
+
+        attempts = int(row.get("attempts") or 0) + 1
         self.store.mark(key, TransferState.DISCOVERED, error=message, bump_attempts=True)
 
         if attempts >= max(1, int(self.cfg.monitor.max_retries)):

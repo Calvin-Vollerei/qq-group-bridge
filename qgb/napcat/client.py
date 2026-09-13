@@ -24,7 +24,7 @@ from typing import Any, Iterator
 
 import requests
 
-from ..errors import LoginRequired, NapCatError
+from ..errors import LoginRequired, NapCatError, TransientError
 from ..models import GroupFile
 
 __all__ = ["OneBotClient", "LoginInfo", "OneBotHTTPError"]
@@ -375,6 +375,22 @@ class OneBotClient:
                     "自带运行时不需要管理员权限，也不会改动你已安装的 QQ。"
                 ),
             )
+
+        # 「fileUUID 找不到」是**临时状态**：NapCat 的 fileUUID 映射只对当前会话
+        # 枚举过的文件有效，映射失效时**所有**文件都取不到直链，稍后又能取到。
+        # 实测：同一个文件在"刚枚举过"时能取到真直链，稍后再取就报
+        # real fileUUID not found!。所以这里单独分类成可重试的临时错误，
+        # 避免把整批文件误判成永久失败。
+        for action, text in errors:
+            if "fileuuid" in text.lower():
+                raise TransientError(
+                    "QQ 组件暂时拿不到该文件的下载直链（fileUUID 未就绪）",
+                    hint=(
+                        "这是临时状态：组件需要先枚举过该文件才能取直链。\n"
+                        "本工具会稍后自动重试，不会把它标记为失败。\n"
+                        "若长期如此，请在「QQ 登录」页重启一次组件。"
+                    ),
+                )
 
         # 没有任何一条给出可用结果：挑信息量最大的一条报出来
         detail = ""

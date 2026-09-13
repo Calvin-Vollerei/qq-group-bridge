@@ -480,6 +480,29 @@ class AppController:
     def _key(row: dict[str, Any]) -> tuple[str, int, str]:
         return (str(row["group_id"]), int(row["busid"]), str(row["file_id"]))
 
+    def prioritize_filtered(self, keys: list[tuple[str, int, str]]) -> int:
+        """把 ``keys`` 里的「待处理」项提到队列前部，返回实际移动的项数。
+
+        置顶项保持最前不动；命中项按传入顺序紧随其后；其余保持原相对顺序。
+        """
+        if self.store is None or not keys:
+            return 0
+        wanted = list(dict.fromkeys(keys))          # 去重且保序
+        rows = self.queue_ordered(limit=5000)
+        index = {self._key(r): i for i, r in enumerate(rows)}
+
+        pinned = [r for r in rows if r.get("pinned")]
+        picked = [rows[index[k]] for k in wanted if k in index]
+        picked_set = {self._key(r) for r in picked}
+        rest = [r for r in rows
+                if not r.get("pinned") and self._key(r) not in picked_set]
+
+        moved = len(picked)
+        if not moved:
+            return 0
+        self._write_queue_order(pinned + picked + rest)
+        return moved
+
     def queue_move(self, key: tuple[str, int, str], delta: int) -> bool:
         """把某项在队列里上移/下移一位（``delta=-1`` 上移，``+1`` 下移）。
 
