@@ -72,6 +72,15 @@ class MonitorTab(Tab):
         mini.pack(fill="x", pady=(10, 0))
         # 这个按钮就是「刷新」：拉取群里的新文件并搬运。
         # 常驻监控运行时也能点（流水线有可重入锁），不必干等一个轮询周期。
+        # 文件列表弹窗的筛选/排序状态：**放在 Tab 上而不是弹窗里** ——
+        # 否则每次关闭再打开都回到默认值（用户实测反馈"一关窗口就重置了"）。
+        self._flt_search = tk.StringVar(master=self, value="")
+        self._flt_status = tk.StringVar(master=self, value="全部")
+        self._flt_group = tk.StringVar(master=self, value="全部")
+        self._flt_size = tk.StringVar(master=self, value="全部")
+        self._flt_sort = tk.StringVar(master=self, value="queue")
+        self._flt_desc = tk.BooleanVar(master=self, value=False)
+
         self.btn_once = ttk.Button(mini, text="🔄  立即刷新（拉取新文件）",
                                    style="Accent.TButton", command=self._run_once)
         self.btn_once.pack(side="left")
@@ -97,6 +106,7 @@ class MonitorTab(Tab):
         self.boxes: dict[str, _StatBox] = {}
         for key, label in (
             ("seen", "已见文件"),
+        ("new_cycle", "本轮新发现"),
             ("pending", "待处理"),
             ("done", "已完成"),
             ("failed", "失败"),
@@ -180,6 +190,7 @@ class MonitorTab(Tab):
         done = c(TransferState.DONE.value) + c(TransferState.UPLOADED.value)
 
         self.boxes["seen"].set(str(data.get("seen", 0)))
+        self.boxes["new_cycle"].set(str(data.get("new_last_cycle", 0)))
         self.boxes["pending"].set(str(pending))
         self.boxes["done"].set(str(done))
         self.boxes["failed"].set(str(c(TransferState.FAILED.value)))
@@ -259,9 +270,9 @@ class MonitorTab(Tab):
 
         ttk.Label(top, text="排序：", style="CardMuted.TLabel").pack(side="left")
 
-        sort_col = tk.StringVar(value="queue")
-        sort_desc = tk.BooleanVar(value=False)
-        search_var = tk.StringVar(value="")
+        sort_col = self._flt_sort
+        sort_desc = self._flt_desc
+        search_var = self._flt_search
 
         def on_sort() -> None:
             refresh()
@@ -291,9 +302,9 @@ class MonitorTab(Tab):
         filt = ttk.Frame(win, padding=(12, 0, 12, 4))
         filt.pack(fill="x")
 
-        status_var = tk.StringVar(value="全部")
-        group_var = tk.StringVar(value="全部")
-        size_var = tk.StringVar(value="全部")
+        status_var = self._flt_status
+        group_var = self._flt_group
+        size_var = self._flt_size
 
         ttk.Label(filt, text="筛选：状态", style="CardMuted.TLabel").pack(side="left")
         status_box = ttk.Combobox(filt, textvariable=status_var, width=10, state="readonly",
@@ -361,7 +372,7 @@ class MonitorTab(Tab):
         bottom = ttk.Frame(win, padding=(12, 0, 12, 10))
         bottom.pack(fill="x")
 
-        info = ttk.Label(bottom, text="", style="Muted.TLabel")
+        info = ttk.Label(bottom, text="", style="Muted.TLabel", justify="left")
         info.pack(side="left")
 
         def selected_key():
@@ -391,7 +402,7 @@ class MonitorTab(Tab):
             return True
 
         def refresh(keep: str | None = None) -> None:
-            rows = self.controller.list_files(search=search_var.get(), limit=5000)
+            rows = self.controller.list_files(search=search_var.get())
 
             # 群聊下拉：按当前数据自动填充（不写死，避免与配置里的群号脱节）
             groups = sorted({str(r.get("group_id", "")) for r in rows if r.get("group_id")})
@@ -458,8 +469,17 @@ class MonitorTab(Tab):
                     tree.selection_set(item)
                     tree.see(item)
             pending_n = sum(1 for r in rows if r.get("state") == TransferState.DISCOVERED.value)
-            info.configure(text=f"筛选后 {len(rows)} 项，其中待处理 {pending_n} 项"
-                                f"（选中一行可置顶/上下移；也可用上方「优先执行筛选结果」）")
+            base = self.controller.stats()
+            seen_total = int(base.get("seen") or 0)
+            counts = base.get("counts") or {}
+            pend_total = int(counts.get("discovered") or 0)
+            done_total = int(counts.get("done") or 0) + int(counts.get("uploaded") or 0)
+            new_cycle = int(base.get("new_last_cycle") or 0)
+            info.configure(
+                text=(f"本表 {len(rows)} 项（其中待处理 {pending_n} 项）　|　"
+                      f"累计：已见 {seen_total}、待处理 {pend_total}、已搬完 {done_total}"
+                      f"　|　本轮新发现 {new_cycle} 个")
+            )
 
         def prioritize() -> None:
             """把**当前筛选结果里的待处理项**按显示顺序提到队首。
@@ -489,7 +509,7 @@ class MonitorTab(Tab):
             if key is None:
                 self.toast("请先选中一行", "warning")
                 return
-            row = next((r for r in self.controller.list_files(search=search_var.get(), limit=2000)
+            row = next((r for r in self.controller.list_files(search=search_var.get())
                         if (str(r["group_id"]), int(r["busid"]), str(r["file_id"])) == key), None)
             if row is not None and row.get("state") != TransferState.DISCOVERED.value:
                 label = state_label.get(str(row.get("state", "")), str(row.get("state", "")))
@@ -504,7 +524,7 @@ class MonitorTab(Tab):
             if not changed:
                 # 说清"到哪条边界"，别再让用户猜（原来只有一句笼统的"已经到边界了"）
                 queue_keys = {f"{r['group_id']}\x1f{r['busid']}\x1f{r['file_id']}"
-                              for r in self.controller.queue_ordered(limit=5000)}
+                              for r in self.controller.queue_ordered()}
                 if f"{key[0]}\x1f{key[1]}\x1f{key[2]}" not in queue_keys:
                     self.toast("这一项不在待处理队列里（可能刚被搬走或状态已变），"
                                "点「🔄 刷新」后重试", "warning")
@@ -524,8 +544,10 @@ class MonitorTab(Tab):
         ttk.Button(bottom, text="↓ 下移", style="Ghost.TButton",
                    command=lambda: act(lambda k: self.controller.queue_move(k, +1))
                    ).pack(side="right", padx=(0, 8))
-        ttk.Button(bottom, text="🔄 刷新", style="Ghost.TButton",
-                   command=lambda: refresh()).pack(side="right", padx=(0, 8))
+        # 「刷新」放在**左侧**、紧跟信息标签：原先它和另外四个按钮都 right 对齐，
+        # 一排按钮宽度超出窗口时它会被挤出可视区 —— 用户反馈"刷新按钮没了"。
+        ttk.Button(bottom, text="🔄 刷新列表", style="Ghost.TButton",
+                   command=lambda: refresh()).pack(side="left", padx=(10, 0))
 
         tree.bind("<Double-1>", lambda _e: act(lambda k: self.controller.queue_pin(k, True)))
         refresh()

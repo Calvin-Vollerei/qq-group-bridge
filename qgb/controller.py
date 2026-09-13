@@ -429,7 +429,7 @@ class AppController:
 
     # ================================================================ 下载顺序
 
-    def list_files(self, *, search: str = "", limit: int = 2000) -> list[dict[str, Any]]:
+    def list_files(self, *, search: str = "", limit: int = 0) -> list[dict[str, Any]]:
         """界面用：全量文件列表（含上传时间），支持搜索。
 
         返回顺序 = **下载顺序**（置顶 → 手工顺序 → 未排序按发现时间），
@@ -439,18 +439,18 @@ class AppController:
         if self.store is None:
             return []
         try:
-            rows = self.store.list_files(search=search, limit=limit)
+            rows = self.store.list_files(search=search, limit=limit if limit > 0 else 10 ** 7)
         except QgbError:
             return []
         # 把待处理项按队列顺序提前，其余保持"最近处理在前"
-        queue = {self._key(r): i for i, r in enumerate(self.queue_ordered(limit=1000))}
+        queue = {self._key(r): i for i, r in enumerate(self.queue_ordered())}
         pending, others = [], []
         for r in rows:
             (pending if self._key(r) in queue else others).append(r)
         pending.sort(key=lambda r: queue[self._key(r)])
         return pending + others
 
-    def queue_ordered(self, limit: int = 500) -> list[dict[str, Any]]:
+    def queue_ordered(self, limit: int = 0) -> list[dict[str, Any]]:
         """待下载队列（**已按下载顺序**排好）。
 
         顺序规则：置顶 → 手工顺序 → 未排序按发现时间（先入先出）。
@@ -458,7 +458,11 @@ class AppController:
         """
         if self.store is None:
             return []
-        return self.store.pending_ordered(limit=limit)
+        # ⚠️ limit<=0 表示**全部**。早先默认 500，而真实规模是几万条待处理
+        # （实测 45,245 条，全量排序仅 156 ms）—— 于是"置顶/优先执行"只调整了
+        # 前 500 条的内部顺序，用户置顶的文件可能排在第 3 万位，
+        # 表现得就像"优先执行没生效"。几万行的排序成本可以忽略，别设上限。
+        return self.store.pending_ordered(limit=limit if limit > 0 else 10 ** 7)
 
     def _write_queue_order(self, rows: list[dict[str, Any]]) -> int:
         if self.store is None:
@@ -488,7 +492,7 @@ class AppController:
         if self.store is None or not keys:
             return 0
         wanted = list(dict.fromkeys(keys))          # 去重且保序
-        rows = self.queue_ordered(limit=5000)
+        rows = self.queue_ordered()                 # 全量：见 queue_ordered 的说明
         index = {self._key(r): i for i, r in enumerate(rows)}
 
         pinned = [r for r in rows if r.get("pinned")]
@@ -568,6 +572,7 @@ class AppController:
             "counts": {},
             "bytes_text": "0 B",
             "uptime": 0.0,
+            "new_last_cycle": 0,
         }
         if self.store is not None:
             try:
@@ -576,8 +581,12 @@ class AppController:
             except QgbError:
                 pass
         if self.pipeline is not None:
-            base["bytes_text"] = self.pipeline.stats.as_dict()["bytes_text"]
-            base["uptime"] = self.pipeline.stats.as_dict()["uptime"]
+            pstats = self.pipeline.stats.as_dict()
+            base["bytes_text"] = pstats["bytes_text"]
+            base["uptime"] = pstats["uptime"]
+            # 区分「累计」与「本轮」：已见/待处理是累计值，
+            # 这里给出**本轮扫描新发现**的数量。
+            base["new_last_cycle"] = pstats.get("new_last_cycle", 0)
         return base
 
     def recent_records(self, limit: int = 200) -> list[dict[str, Any]]:

@@ -55,6 +55,12 @@ class PipelineEvent:
 @dataclass(slots=True)
 class PipelineStats:
     discovered: int = 0
+    #: **本轮**扫描新登记的文件数（每轮开始时清零）。
+    #:
+    #: 为什么要单独一个字段：界面上的「已见」「待处理」是**累计**值
+    #: （库里所有记录的计数），用户会误以为那是'一次探测到的数量'。
+    #: 这个字段才是'刚才这一轮扫到了几个新文件'。
+    new_last_cycle: int = 0
     filtered: int = 0
     skipped: int = 0
     downloaded: int = 0
@@ -66,6 +72,7 @@ class PipelineStats:
     def as_dict(self) -> dict[str, Any]:
         return {
             "discovered": self.discovered,
+            "new_last_cycle": self.new_last_cycle,
             "filtered": self.filtered,
             "skipped": self.skipped,
             "downloaded": self.downloaded,
@@ -280,6 +287,8 @@ class Pipeline:
         """执行一轮「拉取 + 搬运」。返回**本轮增量**统计。"""
         if not self.stats.started_at:
             self.stats.started_at = time.time()
+        # 本轮新发现计数：每轮清零，供界面显示'本次扫描发现几个新文件'
+        self.stats.new_last_cycle = 0
 
         before = self._counters()
 
@@ -357,6 +366,7 @@ class Pipeline:
             if self.store.claim(gf):
                 new_count += 1
                 self.stats.discovered += 1
+                self.stats.new_last_cycle += 1
                 self._emit(
                     "file",
                     f"发现新文件：{gf.name}（{human_size(gf.size)}）",
@@ -374,7 +384,12 @@ class Pipeline:
     # -------------------------------------------------- 搬运
 
     def _drain_pending(self) -> None:
-        limit = max(1, int(self.cfg.monitor.download_concurrency)) * 50
+        # 每轮处理多少个待处理项。
+        # ⚠️ 早先是 concurrency*50（=50）：待处理动辄几万条，用户"置顶/优先执行"
+        # 后仍要等很久才轮到，看起来像没生效。实测本机 45,245 条待处理时
+        # 全量排序仅 156 ms，所以这里放大到几百个也不影响；失败的文件在同一批里
+        # 只处理一次（见下面的 attempted），不会因此放大重试。
+        limit = max(200, int(self.cfg.monitor.download_concurrency) * 200)
         # 走**手工排序**的队列：置顶 → 手工顺序 → 未排序按发现时间。
         # 用户可在「监控」页的搬运记录里置顶 / 上移下移来改变下载顺序。
         pending = self.store.pending_ordered(limit=limit)
