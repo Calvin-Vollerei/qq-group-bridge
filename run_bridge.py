@@ -241,6 +241,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--selftest", action="store_true", help="无界面自检并退出")
     parser.add_argument("--out", default="", help="把自检报告写入该文件（窗口模式必需）")
     parser.add_argument("--version", action="store_true", help="显示版本信息")
+    parser.add_argument(
+        "--ui", choices=("tk", "qt"), default="",
+        help="选择界面实现：tk=旧界面（默认），qt=毛玻璃新界面（PySide6）",
+    )
     args = parser.parse_args(argv)
 
     # PyInstaller 在 Windows 上需要用 freeze_support 保护多进程入口
@@ -261,6 +265,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.selftest:
         out = Path(args.out).expanduser() if args.out else None
         return _run_selftest(out)
+
+    # 界面选择：--ui qt 走 PySide6 毛玻璃界面；默认仍是 Tk（迁移期可随时回退）
+    use_qt = args.ui == "qt"
+    if not use_qt:
+        try:
+            import PySide6  # noqa: F401
+        except ImportError:
+            pass
+    if use_qt:
+        try:
+            from qgb.qt.app import main as qt_main
+        except ImportError as exc:
+            message = (f"导入新界面失败：{exc}\n"
+                       f"请先安装：pip install PySide6\n"
+                       f"或改用旧界面：python run_bridge.py --ui tk")
+            try:
+                print(message, file=sys.stderr)
+            except Exception:
+                pass
+            return 2
+        return qt_main([sys.argv[0]])
 
     try:
         from qgb.gui.app import main as gui_main
