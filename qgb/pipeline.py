@@ -118,6 +118,10 @@ class Pipeline:
         self._thread: threading.Thread | None = None
         self._pause = threading.Event()
         self._lock = threading.RLock()
+        #: 一轮「拉取+搬运」正在进行。用于避免**扫描叠加**：
+        #: 上一轮还没跑完就又点「立即刷新」，会让同一个群被重复枚举、
+        #: 同一批文件被重复登记（用户实测反馈过重复搬运）。
+        self._busy = threading.Event()
         #: 群号 → 群名。取自 OneBot 的 get_group_list，用于「用群名做目录名」
         #: 这类型号；取不到就退回群号，绝不因此中断搬运。
         self._group_names: dict[str, str] = {}
@@ -283,8 +287,27 @@ class Pipeline:
             started_at=self.stats.started_at,
         )
 
+    @property
+    def busy(self) -> bool:
+        """是否正在执行一轮（界面据此避免重复触发扫描）。"""
+        return self._busy.is_set()
+
     def run_once(self) -> PipelineStats:
-        """执行一轮「拉取 + 搬运」。返回**本轮增量**统计。"""
+        """执行一轮「拉取 + 搬运」。返回**本轮增量**统计。
+
+        **不重入**：一轮未结束时再次调用会直接返回增量（0），避免同一批文件
+        被重复枚举/重复登记。
+        """
+        if self._busy.is_set():
+            log.debug("上一轮尚未结束，跳过本次 run_once")
+            return PipelineStats()
+        self._busy.set()
+        try:
+            return self._run_once_locked()
+        finally:
+            self._busy.clear()
+
+    def _run_once_locked(self) -> PipelineStats:
         if not self.stats.started_at:
             self.stats.started_at = time.time()
         # 本轮新发现计数：每轮清零，供界面显示'本次扫描发现几个新文件'
@@ -353,6 +376,10 @@ class Pipeline:
 
             decision = self.filters.check(gf.name, gf.size)
             if not decision.accepted:
+                # ⚠️ 这里必须用 claim() 判定：它对**已完结**的记录返回 False，
+                # 所以被过滤的文件第一轮会被标记为 FILTERED_OUT 并计数一次，
+                # 后续轮次不再重复计数。早先我图省事改成直接 mark，就把这个
+                # 语义弄丢了（test_settled_filtered_file_not_recounted 立刻挂掉）。
                 if self.store.claim(gf):
                     self.store.mark(
                         gf.key, TransferState.FILTERED_OUT, error=decision.reason
@@ -361,6 +388,12 @@ class Pipeline:
                 continue
 
             if self.store.is_settled(gf.key):
+                continue
+
+            # 再按 (群, 文件名, 大小) 查一遍：file_id 会随会话变化，但这三项不会
+            # —— 防止组件重启后把已搬过的文件重新下载上传一遍。
+            # 只认真正搬成功的（DONE/UPLOADED），见 store.is_uploaded_like 的说明。
+            if self.store.is_uploaded_like(gf.group_id, gf.name, gf.size):
                 continue
 
             if self.store.claim(gf):
@@ -393,6 +426,14 @@ class Pipeline:
         # 走**手工排序**的队列：置顶 → 手工顺序 → 未排序按发现时间。
         # 用户可在「监控」页的搬运记录里置顶 / 上移下移来改变下载顺序。
         pending = self.store.pending_ordered(limit=limit)
+
+        # 置顶项绝对优先：把置顶的提到最前，未置顶的顺次后移。
+        # 用户实测反馈"置顶不是那么有效"——只把它排到已排序段之前还不够，
+        # 因为队列里可能还有几百个更早的未排序项；这里直接交换位置，
+        # 保证置顶项就是下一批被处理的。
+        pinned = [r for r in pending if r.get("pinned")]
+        if pinned:
+            pending = pinned + [r for r in pending if not r.get("pinned")]
 
         #: 本次筛选内已经处理过的文件（含失败的）。
         #:

@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS transfers (
 
 CREATE INDEX IF NOT EXISTS idx_transfers_state   ON transfers(state);
 CREATE INDEX IF NOT EXISTS idx_transfers_updated ON transfers(updated_at);
+CREATE INDEX IF NOT EXISTS idx_transfers_name ON transfers(group_id, name, size);
 
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
@@ -280,6 +281,28 @@ class StateStore:
             TransferState.DONE.value,
             TransferState.UPLOADED.value,
         )
+
+    def is_uploaded_like(self, group_id: str, name: str, size: int) -> bool:
+        """按 **(群, 文件名, 大小)** 判断是否已搬过。
+
+        为什么按名字而不是 file_id：QQ 群文件的 ``file_id`` **不是稳定标识**
+        （换一次会话/组件重启就可能变），于是同一个文件会被当成新文件重新
+        下载上传 —— 用户实测反馈"上传过的为什么还重复扫描上传"。
+        (群 + 文件名 + 大小) 在同一群里足以唯一确定一个文件。
+
+        ⚠️ 只认 **DONE / UPLOADED**（真正搬成功的）。早先把 SKIPPED 也算进来，
+        结果把「被过滤掉」的文件也提前跳过了 —— 它们本该每轮重新评估过滤规则
+        （改了过滤条件后要能重新纳入），于是 ``test_non_matching_file_is_filtered``
+        这类用例直接挂掉。**去重的语义是"搬过了"，不是"见过了"。**
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT 1 FROM transfers WHERE group_id=? AND name=? AND size=? "
+                "AND state IN (?,?) LIMIT 1",
+                (str(group_id), str(name), int(size),
+                 TransferState.DONE.value, TransferState.UPLOADED.value),
+            )
+            return cur.fetchone() is not None
 
     def claim(self, gf: GroupFile) -> bool:
         """把文件登记为新任务。

@@ -384,11 +384,18 @@ class AppController:
            停止"。后者是曾经的实现，它**根本跑不完一轮**：循环还没来得及
            执行就被停掉了，按钮点了等于没点（用户反馈"有点鸡肋"就是这个原因）。
 
-        2. **常驻监控运行时也允许手动刷新**。流水线内部有可重入锁，
-           两个循环不会互相踩；而"监控中想要立刻看到新文件"是很自然的需求
-           （常驻轮询要等一个 ``poll_interval_sec`` 周期）。
+        2. **常驻监控运行时也允许手动刷新**，但**不重入**：一轮还没跑完时
+           再点只会白等，还会让同一个群被重复枚举（用户实测反馈过重复搬运）。
+           所以这里先查 ``pipeline.busy``，正在跑就明确提示"当前一轮还没结束"，
+           而不是静默返回一个空结果。
         """
         pipeline = self.pipeline
+        if pipeline is not None and getattr(pipeline, "busy", False):
+            self._post(
+                "info",
+                "当前一轮扫描/搬运还没结束，已跳过这次刷新（避免重复枚举同一个群）",
+            )
+            return False
         if pipeline is None:
             self._post("warning", "QQ 组件未就绪，无法立即检查")
             return False

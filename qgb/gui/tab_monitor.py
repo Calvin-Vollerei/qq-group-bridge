@@ -497,7 +497,8 @@ class MonitorTab(Tab):
                     if r.get("upload_time") else "—",
                     state_label.get(str(r.get("state", "")), str(r.get("state", ""))),
                     time.strftime("%m-%d %H:%M", time.localtime(r.get("updated_at") or 0)),
-                    key,
+                    str(r.get("state", "")),   # 隐藏：原始状态值（判断一律用它）
+                    key,                       # 隐藏：记录 key
                 ))
                 if keep and key == keep:
                     tree.selection_set(item)
@@ -528,7 +529,10 @@ class MonitorTab(Tab):
                 if not raw:
                     continue
                 g, b, f = raw.split("\x1f")
-                if state_label.get(str(vals[5]), "") != "待处理":
+                # ⚠️ 必须比对**原始状态值**（-2 位）。踩过的坑：列里存的是中文
+                # 标签"待处理"，再拿它去查 state_label（键是 "discovered"）永远
+                # 查不到 → 永远判定"没有待处理"，按钮形同虚设。
+                if str(vals[-2]) != TransferState.DISCOVERED.value:
                     continue
                 keys.append((g, int(b), f))
             if not keys:

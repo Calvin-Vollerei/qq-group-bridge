@@ -231,10 +231,10 @@ rem 打包（含测试/冒烟/扫密闸门 + 生成可分发包）
 powershell -File scripts/build.ps1
 
 rem 合成 GitHub 发布用整包（主程序 + NapCat 组件，自带自检与扫密）
-python scripts/pack_release.py --version v1.6
+python scripts/pack_release.py --version v1.7
 
 rem 合成给零基础用户的交付包（中文包名、求救脚本改名、附带三份图文说明）
-python scripts/make_delivery_zip.py --version v1.6
+python scripts/make_delivery_zip.py --version v1.7
 ```
 
 本仓库**未启用云端 CI**：这是个 Windows 专用工具（DPAPI、tkinter、注册表探测），
@@ -273,10 +273,10 @@ packaging/         发布包内的脚本与说明
 ### 发布流程
 
 1. `powershell -File scripts/build.ps1` —— 跑全部闸门并生成 `dist/QQ群文件搬运工/`
-   与 `dist/qgb-v1.6-app-only.zip`（**不含** `data/`，即不含任何凭据）
+   与 `dist/qgb-v1.7-app-only.zip`（**不含** `data/`，即不含任何凭据）
 2. 在该目录里完成一次真实登录（NapCat 组件才会就位），再
-   `python scripts/pack_release.py --version v1.6` 合成整包
-3. 把 `dist/qgb-v1.6-full.zip` 拖进 GitHub 的 Release
+   `python scripts/pack_release.py --version v1.7` 合成整包
+3. 把 `dist/qgb-v1.7-full.zip` 拖进 GitHub 的 Release
 
 第 2 步的整包脚本会自动排除本机运行痕迹：NapCat 跑过之后会在
 `data/napcat/shell/` 里留下 `napcat.out.log`、`guild1.db`、`cache/qrcode.png`
@@ -305,7 +305,7 @@ for rel, src in (("README.md", "README.md"),
     (Path("dist/QQ群文件搬运工") / rel).write_bytes(raw if raw.startswith(BOM) else BOM + raw)
 EOF
 python scripts/make_release_zip.py
-python scripts/pack_release.py --version v1.6
+python scripts/pack_release.py --version v1.7
 ```
 
 最省事的做法仍是直接跑一次 `powershell -File scripts/build.ps1`——
