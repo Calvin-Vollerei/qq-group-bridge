@@ -82,6 +82,9 @@ class AppController:
         self.pipeline: Pipeline | None = None
 
         self._qr: QrCode = QrCode()
+        self._qr_seq = 0            # 二维码请求序号：新请求取代旧请求
+        self._qr_seq_ok = 0
+        self._qr_at = 0.0            # 最近一次成功取码的时间（monotonic）
         self._busy: set[str] = set()
         #: 群号 → 群名 缓存（界面「按群名一键生成目录名」用）
         self._group_names: dict[str, str] = {}
@@ -235,11 +238,30 @@ class AppController:
     def is_busy(self, name: str) -> bool:
         return name in self._busy
 
-    def run_async(self, name: str, fn: Callable[[], Any], *, on_done: Callable[[Any, Exception | None], None] | None = None) -> bool:
-        """在后台线程跑一件事，并把异常转成界面可读的事件。"""
+    def run_async(
+        self,
+        name: str,
+        fn: Callable[[], Any],
+        *,
+        on_done: Callable[[Any, Exception | None], None] | None = None,
+        force: bool = False,
+    ) -> bool:
+        """在后台线程跑一件事，并把异常转成界面可读的事件。
+
+        ``force=True`` 允许**同名任务重入**（用于「刷新二维码」这类需要
+        "新的取代旧的"的操作）。默认仍然拒绝重入，避免用户连点造成重复副作用。
+
+        ⚠️ 拒绝重入时**必须让调用方知道**：早先界面在 ``False`` 时什么都不做，
+        于是连点「获取二维码」看起来像"点了没反应"（单次最长要等 25 秒、
+        二维码 30 秒过期，用户必然连点）。现在二维码走 ``force``，
+        其它任务在拒绝时也应给出界面反馈。
+        """
         with self._lock:
             if name in self._busy:
-                return False
+                if not force:
+                    return False
+                # force：标记旧的已经作废（seq 机制在任务内部判断），直接放行
+                log.debug("后台任务 %s 被强制重入（新请求取代旧请求）", name)
             self._busy.add(name)
 
         def worker() -> None:
@@ -405,6 +427,88 @@ class AppController:
             )
         return True
 
+    # ================================================================ 下载顺序
+
+    def queue_ordered(self, limit: int = 500) -> list[dict[str, Any]]:
+        """待下载队列（**已按下载顺序**排好）。
+
+        顺序规则：置顶 → 手工顺序 → 未排序按发现时间（先入先出）。
+        界面按这个顺序展示，用户调完再整体写回，顺序即下载顺序。
+        """
+        if self.store is None:
+            return []
+        return self.store.pending_ordered(limit=limit)
+
+    def _write_queue_order(self, rows: list[dict[str, Any]]) -> int:
+        if self.store is None:
+            return 0
+        items = [(str(r["group_id"]), int(r["busid"]), str(r["file_id"])) for r in rows]
+        return self.store.set_file_order(items)
+
+    def _rebase(self) -> list[dict[str, Any]]:
+        """把当前队列按显示顺序**重写一遍** manual_order。
+
+        为什么要整体重写：显示顺序是「置顶 → 手工顺序 → 未排序」三段合成的，
+        重写后三段合成为单一序列，之后的移动只需交换相邻两项，语义最简单。
+        """
+        rows = self.queue_ordered()
+        self._write_queue_order(rows)
+        return self.queue_ordered()
+
+    @staticmethod
+    def _key(row: dict[str, Any]) -> tuple[str, int, str]:
+        return (str(row["group_id"]), int(row["busid"]), str(row["file_id"]))
+
+    def queue_move(self, key: tuple[str, int, str], delta: int) -> bool:
+        """把某项在队列里上移/下移一位（``delta=-1`` 上移，``+1`` 下移）。
+
+        只在**同组**（置顶 / 非置顶）内交换，且不跨越置顶边界 ——
+        否则"上移"会把置顶项挤下去，与置顶的语义冲突。
+        """
+        rows = self._rebase()
+        index = next((i for i, r in enumerate(rows) if self._key(r) == key), None)
+        if index is None:
+            return False
+        pinned = [bool(r.get("pinned")) for r in rows]
+        target = index + delta
+        if target < 0 or target >= len(rows):
+            return False
+        if pinned[target] != pinned[index]:
+            return False                      # 不跨越置顶边界
+        rows[index], rows[target] = rows[target], rows[index]
+        self._write_queue_order(rows)
+        return True
+
+    def queue_pin(self, key: tuple[str, int, str], pinned: bool) -> bool:
+        """置顶 / 取消置顶。
+
+        * 置顶：插到队列最前，并标记 pinned（之后排序始终在最前）。
+        * 取消置顶：只清 pinned 标记，**位置留在未置顶段的最前**——
+          不会掉到队尾（用户期待的是"让出置顶区"，不是"排到最后"）。
+        """
+        rows = self._rebase()
+        index = next((i for i, r in enumerate(rows) if self._key(r) == key), None)
+        if index is None:
+            return False
+
+        row = rows.pop(index)
+        if pinned:
+            rows.insert(0, row)
+        else:
+            first_unpinned = next(
+                (i for i, r in enumerate(rows) if not r.get("pinned")), len(rows)
+            )
+            rows.insert(first_unpinned, row)
+
+        self._write_queue_order(rows)
+        if self.store is not None:
+            self.store.set_pinned(*self._key(row), pinned=pinned)
+        return True
+
+    def queue_to_front(self, key: tuple[str, int, str]) -> bool:
+        """置顶到第一位（与 queue_pin(pinned=True) 等价，便于界面直连）。"""
+        return self.queue_pin(key, pinned=True)
+
     def requeue_failed(self) -> int:
         store = self.store
         if store is None:
@@ -504,6 +608,19 @@ class AppController:
         return self.run_async("napcat_token", task)
 
     def fetch_qrcode(self) -> bool:
+        """获取/刷新二维码。
+
+        **为什么不能让重复点击被静默丢弃**：``run_async`` 原本对同名任务会
+        ``return False``（"已有同名任务在跑"），而界面在拿到 False 时什么都不做。
+        单次取码最长要等 25 秒（HTTP 超时），二维码又只有 30 秒时效 ——
+        用户会连点数次，每一次都被丢弃，表现就是「点了没反应/刷新不了」。
+
+        现在改成**取代语义**：新请求作废旧请求，旧请求即使拿到结果也会被丢弃
+        （``seq`` 不匹配），界面永远只显示最新那一次的结果。
+        """
+        self._qr_seq += 1
+        seq = self._qr_seq
+
         def task():
             webui = self.config.napcat.webui_base
             # 令牌以组件配置为准（见 _webui_token 的说明）：
@@ -513,9 +630,18 @@ class AppController:
 
             install_dir = self.napcat.install_dir if self.napcat else None
             qr = fetch_qrcode(webui, token or "", napcat_dir=install_dir)
+
+            if seq != self._qr_seq:
+                # 已被更新的请求取代：不要用过期结果覆盖界面
+                log.debug("二维码请求 %s 已被更新的一次取代，丢弃结果", seq)
+                return qr
+
             self._qr = qr
+            self._qr_seq_ok = seq
+            self._qr_at = time.monotonic()
             if qr.ok:
-                self._post("qr", "二维码已获取，请用手机 QQ 扫码", ok=True, source=qr.source)
+                self._post("qr", "二维码已获取，请用手机 QQ 扫码", ok=True,
+                           source=qr.source, seq=seq)
             else:
                 self._post(
                     "qr",
@@ -523,10 +649,22 @@ class AppController:
                     level="warning",
                     ok=False,
                     hint=qr.hint,
+                    seq=seq,
                 )
             return qr
 
-        return self.run_async("qrcode", task)
+        if not self.run_async("qrcode", task, force=True):
+            return False
+        # 立刻回一条事件，让界面马上有反馈（不等网络请求完成）
+        self._post("qr", "正在获取二维码…", level="info", pending=True, seq=seq)
+        return True
+
+    @property
+    def qrcode_age_sec(self) -> float:
+        """上一次成功取到二维码距今多少秒（用于提示是否已过期）。"""
+        if not self._qr_at:
+            return -1.0
+        return max(0.0, time.monotonic() - self._qr_at)
 
     @property
     def qrcode(self) -> QrCode:

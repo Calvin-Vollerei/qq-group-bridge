@@ -81,6 +81,11 @@ class AdvancedTab(Tab):
                             hint="0 表示上传成功后立即删除，节省磁盘")
         self.f_keep.grid(row=1, column=2, sticky="ew")
 
+        self.f_stall = Field(rel, "下载卡死阈值（秒）", scale=self.scale, width=14,
+                             hint="服务器不再发数据超过该秒数就放弃该文件、继续下一个"
+                                  "（最低 5 秒）")
+        self.f_stall.grid(row=2, column=0, sticky="ew", padx=(0, 10), pady=(8, 0))
+
         # ---------- 资源保护
         res = Card(body, scale=self.scale)
         res.grid(row=2, column=0, sticky="ew", pady=(10, 0))
@@ -151,6 +156,7 @@ class AdvancedTab(Tab):
         self.f_retries.set(str(m.max_retries))
         self.f_backoff.set(str(m.retry_backoff_sec))
         self.f_keep.set(str(m.keep_local_days))
+        self.f_stall.set(str(getattr(m, "stall_timeout_sec", 20.0)))
 
         self.f_maxfile.set(str(m.max_file_mb or 0))
         self.f_minfree.set(str(m.min_free_disk_gb or 0))
@@ -186,6 +192,7 @@ class AdvancedTab(Tab):
         m.max_retries = as_int(self.f_retries, 3, 1)
         m.retry_backoff_sec = as_int(self.f_backoff, 30)
         m.keep_local_days = as_int(self.f_keep, 0)
+        m.stall_timeout_sec = max(5.0, as_float(self.f_stall, 20.0))
 
         m.max_file_mb = as_float(self.f_maxfile)
         m.min_free_disk_gb = as_float(self.f_minfree)

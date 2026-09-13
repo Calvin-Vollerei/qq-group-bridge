@@ -32,6 +32,11 @@ class QQTab(Tab):
                               padx=10, pady=2, font=ui_font(self.scale, size=9, bold=True))
         self.badge.pack(side="left", padx=(10, 0))
 
+        # 二维码刷新状态：允许连点（新请求取代旧请求），期间按钮置忙
+        self._qr_pending = False
+        self._qr_image = None
+        self._poll_left = 0
+
         self.status_text = ttk.Label(status, text="", style="CardMuted.TLabel",
                                      justify="left")
         self.status_text.pack(anchor="w", pady=(8, 0))
@@ -72,7 +77,7 @@ class QQTab(Tab):
 
         qr_btns = ttk.Frame(qr_card, style="Card.TFrame")
         qr_btns.pack(fill="x", pady=(10, 0))
-        self.btn_qr = ttk.Button(qr_btns, text="① 获取二维码", style="Accent.TButton",
+        self.btn_qr = ttk.Button(qr_btns, text="① 获取/刷新二维码", style="Accent.TButton",
                                  command=self._fetch_qr)
         self.btn_qr.pack(fill="x")
         ttk.Button(qr_btns, text="② 我已扫码，检查登录状态", style="Ghost.TButton",
@@ -262,8 +267,19 @@ class QQTab(Tab):
             messagebox.showerror("打开失败", str(exc))
 
     def _fetch_qr(self) -> None:
-        if self.controller.fetch_qrcode():
-            self.toast("正在获取二维码…")
+        """获取/刷新二维码。
+
+        可以**反复点**：新的请求会取代上一次还没回来的请求（旧结果直接丢弃）。
+        旧版这里在拿不到执行权时什么都不做，用户看到的就是「点了没反应」——
+        而单次取码最长 25 秒、二维码 30 秒过期，连点是必然行为。
+        """
+        self._qr_pending = True
+        self.set_busy(self.btn_qr, True, "① 获取/刷新二维码")
+        self.qr_hint.configure(text="正在获取二维码…（最长等 25 秒）")
+        if not self.controller.fetch_qrcode():
+            self._qr_pending = False
+            self.set_busy(self.btn_qr, False)
+            self.toast("获取二维码的请求未能启动，请稍后重试", "warning")
 
     def _save_qr(self) -> None:
         qr = self.controller.qrcode
@@ -365,6 +381,14 @@ class QQTab(Tab):
         self.after(3000, self._tick_poll)
 
     def _render_qr(self, event: Event) -> None:
+        # pending = 「正在获取…」的即时反馈事件：只更新提示，**不要**动已有二维码
+        if event.data.get("pending"):
+            self.qr_hint.configure(text="正在获取二维码…（最长等 25 秒，可重复点击刷新）")
+            return
+
+        self._qr_pending = False
+        self.set_busy(self.btn_qr, False)
+
         qr = self.controller.qrcode
         if qr.ok:
             try:
@@ -379,7 +403,8 @@ class QQTab(Tab):
                 self.qr_label.configure(image=self._qr_image, text="", width=0, height=0,
                                         bg="#FFFFFF")
                 self.qr_hint.configure(
-                    text="请用手机 QQ 扫码登录。二维码有时效，过期请重新获取。\n"
+                    text="请用手机 QQ 扫码登录。二维码约 30 秒失效 —— "
+                         "过期就点「① 获取/刷新二维码」重新取一张（可连点）。\n"
                          "扫码后本页会自动检测登录结果。"
                 )
                 self._start_login_poll()
@@ -396,4 +421,9 @@ class QQTab(Tab):
         # 失败时给出「原因 + 下一步怎么做」，而不是只甩一句错误
         reason = event.message or "获取失败"
         hint = str(event.data.get("hint") or "")
-        self.qr_hint.configure(text=f"{reason}\n{hint}" if hint else reason)
+        retry = "可以再点一次「① 获取/刷新二维码」重试。"
+        parts = [reason]
+        if hint:
+            parts.append(hint)
+        parts.append(retry)
+        self.qr_hint.configure(text="\n".join(parts))

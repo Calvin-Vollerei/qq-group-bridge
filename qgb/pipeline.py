@@ -100,6 +100,7 @@ class Pipeline:
         self.downloader = downloader or Downloader(
             max_retries=cfg.monitor.max_retries,
             backoff_base=cfg.monitor.retry_backoff_sec,
+            stall_timeout=getattr(cfg.monitor, "stall_timeout_sec", 20.0),
         )
         self.tmp_dir = cfg.resolved_temp_dir()
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -373,7 +374,9 @@ class Pipeline:
 
     def _drain_pending(self) -> None:
         limit = max(1, int(self.cfg.monitor.download_concurrency)) * 50
-        pending = self.store.pending(limit=limit)
+        # 走**手工排序**的队列：置顶 → 手工顺序 → 未排序按发现时间。
+        # 用户可在「监控」页的搬运记录里置顶 / 上移下移来改变下载顺序。
+        pending = self.store.pending_ordered(limit=limit)
 
         for row in pending:
             if self._stop.is_set():

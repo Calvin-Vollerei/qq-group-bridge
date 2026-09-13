@@ -223,15 +223,111 @@ class MonitorTab(Tab):
         self._refresh_stats()
 
     def _show_records(self) -> None:
-        rows = self.controller.recent_records(limit=300)
+        """搬运记录 + **下载顺序**管理。
+
+        顺序区只列「待处理」的文件：置顶的排最前（带 ★），其余按手工顺序，
+        没手工排过的按发现时间。这里改完即刻生效 —— 搬运线程每处理一个文件
+        都会重新按当前顺序取队列，所以不需要重启监控。
+        """
+        from ..utils import human_size
+
         win = tk.Toplevel(self)
-        win.title("搬运记录")
-        win.geometry("900x460")
+        win.title("搬运记录与下载顺序")
+        win.geometry("960x640")
         win.configure(bg=Palette.BG)
         win.transient(self.winfo_toplevel())
 
+        # ---------------- 下载顺序
+        ttk.Label(win, text="下载顺序（只影响「待处理」的文件）", style="Head.TLabel",
+                  padding=(12, 10, 12, 4)).pack(anchor="w")
+        ttk.Label(
+            win,
+            text="★ = 已置顶（永远排最前）。选中一行后用右侧按钮调整；"
+                 "改完立即生效，监控不用重启。",
+            style="Muted.TLabel", padding=(12, 0, 12, 6),
+        ).pack(anchor="w")
+
+        qwrap = ttk.Frame(win, padding=(12, 0, 12, 8))
+        qwrap.pack(fill="both", expand=True)
+
+        qtree = ttk.Treeview(qwrap, columns=("order", "name", "group", "size"),
+                             show="headings", height=9)
+        for col, text, width in (
+            ("order", "顺序", 60),
+            ("name", "文件名", 420),
+            ("group", "群号", 110),
+            ("size", "大小", 90),
+        ):
+            qtree.heading(col, text=text)
+            qtree.column(col, width=width, anchor="w")
+
+        qscroll = ttk.Scrollbar(qwrap, orient="vertical", command=qtree.yview)
+        qtree.configure(yscrollcommand=qscroll.set)
+        qtree.pack(side="left", fill="both", expand=True)
+        qscroll.pack(side="right", fill="y")
+
+        def row_key() -> tuple[str, int, str] | None:
+            sel = qtree.selection()
+            if not sel:
+                return None
+            vals = qtree.item(sel[0], "values")
+            # 隐藏的 key 放在 values 末尾（用 item 的 tags 存更稳，这里用 values 第 5 项）
+            return tuple(vals[4].split("\x1f"))  # type: ignore[return-value]
+
+        def reload_queue(keep: tuple[str, int, str] | None = None) -> None:
+            qtree.delete(*qtree.get_children())
+            rows = self.controller.queue_ordered()
+            for i, r in enumerate(rows, 1):
+                star = "★ " if r.get("pinned") else ""
+                key = f"{r['group_id']}\x1f{r['busid']}\x1f{r['file_id']}"
+                item = qtree.insert("", "end", values=(
+                    f"{i}", f"{star}{r.get('name','')}",
+                    _mask_group(str(r.get("group_id", ""))),
+                    human_size(r.get("size", 0)), key,
+                ))
+                if keep is not None and (str(r["group_id"]), int(r["busid"]),
+                                         str(r["file_id"])) == keep:
+                    qtree.selection_set(item)
+                    qtree.see(item)
+
+        def act(fn) -> None:
+            key = row_key()
+            if key is None:
+                self.toast("请先选中一个待下载文件", "warning")
+                return
+            try:
+                changed = fn(key)
+            except Exception as exc:  # noqa: BLE001 - 界面动作不许把窗口带崩
+                self.toast(f"操作失败：{type(exc).__name__}", "error")
+                return
+            if not changed:
+                self.toast("已经到边界了，或该项不支持该操作", "info")
+            reload_queue(keep=key)
+
+        btns = ttk.Frame(win, padding=(12, 0, 12, 10))
+        btns.pack(fill="x")
+        ttk.Button(btns, text="★ 置顶", style="Accent.TButton",
+                   command=lambda: act(lambda k: self.controller.queue_pin(k, True))
+                   ).pack(side="left")
+        ttk.Button(btns, text="取消置顶", style="Ghost.TButton",
+                   command=lambda: act(lambda k: self.controller.queue_pin(k, False))
+                   ).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="↑ 上移", style="Ghost.TButton",
+                   command=lambda: act(lambda k: self.controller.queue_move(k, -1))
+                   ).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="↓ 下移", style="Ghost.TButton",
+                   command=lambda: act(lambda k: self.controller.queue_move(k, +1))
+                   ).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="🔄 刷新队列", style="Ghost.TButton",
+                   command=lambda: reload_queue()).pack(side="left", padx=(8, 0))
+        ttk.Label(btns, text="（上移/下移不会跨越置顶边界）", style="Muted.TLabel"
+                  ).pack(side="left", padx=(12, 0))
+
+        qtree.bind("<Double-1>", lambda _e: act(lambda k: self.controller.queue_pin(k, True)))
+
+        # ---------------- 搬运记录
         ttk.Label(win, text="最近处理的文件", style="Head.TLabel",
-                  padding=(12, 10)).pack(anchor="w")
+                  padding=(12, 4)).pack(anchor="w")
 
         wrap = ttk.Frame(win, padding=(12, 0, 12, 12))
         wrap.pack(fill="both", expand=True)
@@ -248,8 +344,6 @@ class MonitorTab(Tab):
             tree.heading(col, text=text)
             tree.column(col, width=width, anchor="w")
 
-        from ..utils import human_size
-
         label_map = {
             TransferState.DONE.value: "已完成",
             TransferState.UPLOADED.value: "已上传",
@@ -262,6 +356,7 @@ class MonitorTab(Tab):
             TransferState.SKIPPED.value: "已跳过",
             TransferState.EXPIRED.value: "已过期",
         }
+        rows = self.controller.recent_records(limit=300)
         for row in rows:
             tree.insert("", "end", values=(
                 row.get("name", ""),
@@ -278,6 +373,8 @@ class MonitorTab(Tab):
 
         if not rows:
             ttk.Label(win, text="暂无记录", style="Muted.TLabel").pack(pady=6)
+
+        reload_queue()
 
     # -------------------------------------------------- 事件
 

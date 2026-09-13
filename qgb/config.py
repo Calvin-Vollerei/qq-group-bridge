@@ -157,6 +157,13 @@ class MonitorConfig:
     recursive_folders: bool = True
     #: 每个群单次拉取的文件条数
     page_size: int = 50
+    #: 下载"卡死"判定（秒）：连续这么久没有收到任何数据就放弃该文件、继续下一个。
+    #:
+    #: 为什么需要它：requests 的 read timeout 只在"读操作超时"时触发，
+    #: 服务器接受了连接却不再发数据时可能长时间不返回；而本工具单线程逐文件处理，
+    #: 一个卡住的下载会让整批看起来"卡死"。20 秒无数据即判定卡住，
+    #: 失败会被记录并稍后自动重试（不会丢掉文件）。
+    stall_timeout_sec: float = 20.0
 
 
 @dataclass

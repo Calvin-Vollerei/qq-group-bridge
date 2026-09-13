@@ -56,6 +56,14 @@ class DownloadResult:
         return self.size / self.elapsed if self.elapsed > 0 else 0.0
 
 
+class DownloadStalled(DownloadError):
+    """下载卡住（连续一段时间没有收到数据）。
+
+    单独成类是为了让上层能区分「卡住」与「内容错误」，
+    并在提示里给出可操作的建议（调大阈值 / 稍后重试）。
+    """
+
+
 class Downloader:
     """带重试与断点续传的流式下载器。"""
 
@@ -64,12 +72,23 @@ class Downloader:
         *,
         chunk_size: int = 256 * 1024,
         timeout: tuple[float, float] = (15.0, 60.0),
+        #: 「卡住」阈值（秒）：连续这么久没收到数据就放弃该文件。
+        #: 同时用于收紧 HTTP 读超时——只靠 iter_content 是发现不了卡住的（实测过）。
+        #: 实际生效值不低于 5 秒。
+        stall_timeout: float = 20.0,
         max_retries: int = 3,
         backoff_base: float = 5.0,
         user_agent: str = "qgb/0.1 (+group-file-bridge)",
     ) -> None:
         self.chunk_size = chunk_size
         self.timeout = timeout
+        #: 连续多久没收到任何数据就判定「卡住」并放弃该文件。
+        #:
+        #: 为什么不能只靠 requests 的 read timeout：它只在「读操作超时」时触发，
+        #: 服务器接了连接却不再发数据时可能长时间不返回。而本工具是单线程逐文件
+        #: 处理，一个卡住的下载会让整批看起来「卡死」。所以这里自己数「多久没数据」。
+        #: 实际生效值最低 5 秒（低于此值夹到 5）——太小会把慢速服务器误判成卡住。
+        self.stall_timeout = max(5.0, float(stall_timeout))
         self.max_retries = max(1, max_retries)
         self.backoff_base = backoff_base
         self.session = requests.Session()
@@ -92,6 +111,21 @@ class Downloader:
         return status in (401, 403, 404, 410)
 
     # -------------------------------------------------- 主流程
+
+    def _check_stalled(self, last_data: float, written: int) -> None:
+        """兜底检查：连接看似活着但长时间没数据时放弃。
+
+        主力机制其实是**读超时**（见 download 里的说明）——连接静默时
+        ``iter_content`` 不会产出空块，这个方法多半不会被触发；
+        留着是为了覆盖"服务端偶发空块"这类边缘情况。
+        """
+        idle = time.monotonic() - last_data
+        if idle > self.stall_timeout:
+            raise DownloadStalled(
+                f"下载卡住：{idle:.0f} 秒没有收到新数据（已写入 {human_size(written)}）",
+                hint="已放弃该文件并继续下一个；稍后会自动重试。"
+                     "若经常出现，可在「高级」页调大「卡死阈值」。",
+            )
 
     def download(
         self,
@@ -178,7 +212,13 @@ class Downloader:
             url,
             headers=req_headers,
             stream=True,
-            timeout=self.timeout,
+            # ⚠️ **读超时必须收紧到卡死阈值**，否则「卡住」根本不会及时被发现：
+            #    实测：服务器发完 8KB 就不再发数据时，iter_content 不会产出空块，
+            #    而是阻塞在 socket 读上，直到 60 秒读超时才抛 IncompleteRead，
+            #    再乘上重试次数 → 用户看到的是「卡死两分钟」。
+            #    把读超时设成 stall_timeout 后，静默 20 秒即触发超时、
+            #    快速放弃并继续下一个文件。
+            timeout=(self.timeout[0], min(self.timeout[1], self.stall_timeout)),
             allow_redirects=True,
         ) as resp:
             if self._is_signature_error(resp.status_code):
@@ -213,10 +253,14 @@ class Downloader:
             written = resumed_from
             last_emit = 0.0
 
+            last_data = time.monotonic()          # 最近一次真正收到数据的时间
             with part.open(mode) as fh:
                 for block in resp.iter_content(chunk_size=self.chunk_size):
                     if not block:
+                        # iter_content 在连接被中断时也可能产出空块；借机检查是否已卡住
+                        self._check_stalled(last_data, written)
                         continue
+                    last_data = time.monotonic()
                     fh.write(block)
                     written += len(block)
 

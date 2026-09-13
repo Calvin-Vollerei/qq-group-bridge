@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import sqlite3
 import threading
 import time
@@ -17,6 +19,8 @@ from typing import Any, Iterator, Sequence
 
 from .errors import QgbError
 from .models import GroupFile, TransferState
+
+log = logging.getLogger(__name__)
 
 __all__ = ["StateStore", "StoreError"]
 
@@ -49,6 +53,8 @@ CREATE TABLE IF NOT EXISTS transfers (
     state       TEXT    NOT NULL,
     attempts    INTEGER NOT NULL DEFAULT 0,
     error       TEXT    NOT NULL DEFAULT '',
+    manual_order INTEGER NOT NULL DEFAULT 0,
+    pinned       INTEGER NOT NULL DEFAULT 0,
     created_at  REAL    NOT NULL,
     updated_at  REAL    NOT NULL,
     PRIMARY KEY (group_id, busid, file_id)
@@ -93,6 +99,7 @@ class StateStore:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.executescript(_DDL)
+            self._migrate()
             self._conn.commit()
             self._conn.execute(
                 "INSERT OR IGNORE INTO kv(key, value) VALUES('schema_version', ?)",
@@ -103,6 +110,87 @@ class StateStore:
             raise StoreError(f"无法打开状态库：{exc}") from exc
 
     # -------------------------------------------------- 基础设施
+
+    #: 后加的列：``CREATE TABLE IF NOT EXISTS`` **不会**给已存在的表补列，
+    #: 所以老库必须显式 ALTER，否则升级后一执行带新列的 SQL 就报 no such column。
+    _ADDED_COLUMNS = (
+        ("transfers", "manual_order", "INTEGER NOT NULL DEFAULT 0"),
+        ("transfers", "pinned", "INTEGER NOT NULL DEFAULT 0"),
+    )
+
+    def _migrate(self) -> None:
+        """把老库补齐到当前结构（幂等，可反复执行）。"""
+        for table, column, decl in self._ADDED_COLUMNS:
+            cols = {
+                row["name"]
+                for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if not cols:
+                continue                     # 表还不存在，_DDL 已建好且已含该列
+            if column not in cols:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                log.info("状态库迁移：%s 增加列 %s", table, column)
+
+    # -------------------------------------------------- 手工排序
+
+    def set_file_order(
+        self,
+        items: list[tuple[str, int, str]],
+        *,
+        pinned: bool | None = None,
+    ) -> int:
+        """按给定顺序写入 ``manual_order``（下标 × 10，留出插入余地）。
+
+        ``items`` 为 ``[(group_id, busid, file_id), ...]``，**按用户期望的顺序**排列。
+        ``pinned`` 为 None 时不动置顶标记。
+        """
+        n = 0
+        with self._write() as conn:
+            for index, (group_id, busid, file_id) in enumerate(items):
+                if pinned is None:
+                    cur = conn.execute(
+                        "UPDATE transfers SET manual_order=? "
+                        "WHERE group_id=? AND busid=? AND file_id=?",
+                        ((index + 1) * 10, str(group_id), int(busid), str(file_id)),
+                    )
+                else:
+                    cur = conn.execute(
+                        "UPDATE transfers SET manual_order=?, pinned=? "
+                        "WHERE group_id=? AND busid=? AND file_id=?",
+                        ((index + 1) * 10, 1 if pinned else 0,
+                         str(group_id), int(busid), str(file_id)),
+                    )
+                n += cur.rowcount or 0
+            conn.commit()
+        return n
+
+    def set_pinned(self, group_id: str, busid: int, file_id: str, pinned: bool) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "UPDATE transfers SET pinned=? WHERE group_id=? AND busid=? AND file_id=?",
+                (1 if pinned else 0, str(group_id), int(busid), str(file_id)),
+            )
+            conn.commit()
+
+    def pending_ordered(self, limit: int = 500) -> list[dict[str, Any]]:
+        """待处理队列，按**手工顺序**排：置顶在前 → ``manual_order`` → 发现时间。
+
+        ``manual_order`` 默认 0，表示"没被手工排过"，排在已排序的之后、
+        仍按先入先出。这样既满足"完全按我排的顺序"，又不会让没排过的文件乱跳。
+        """
+        with self._lock:
+            # ⚠️ 不能直接 ``ORDER BY manual_order``：未手工排过的行 manual_order=0，
+            #    而 0 < 10，会让它们插到已排序的行**中间**。
+            #    正确做法：没排过（=0）的当作"极大值"排到最后，仍按发现时间先入先出。
+            cur = self._conn.execute(
+                "SELECT * FROM transfers WHERE state=? "
+                "ORDER BY pinned DESC, "
+                "         CASE WHEN manual_order>0 THEN manual_order ELSE 2147483647 END, "
+                "         created_at, rowid "
+                "LIMIT ?",
+                (TransferState.DISCOVERED.value, int(limit)),
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     @contextmanager
     def _write(self) -> Iterator[sqlite3.Connection]:
