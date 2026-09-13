@@ -52,10 +52,10 @@ class Palette:
 
 DARK = Palette(
     key="dark", name="夜间",
-    window_tint="rgba(18, 20, 26, 0.42)",
-    card="rgba(58, 62, 74, 0.52)",
-    card_hover="rgba(74, 80, 94, 0.60)",
-    card_strong="rgba(30, 33, 41, 0.86)",
+    window_tint="rgba(18, 20, 26, 0.22)",
+    card="rgba(58, 62, 74, 0.26)",
+    card_hover="rgba(74, 80, 94, 0.36)",
+    card_strong="rgba(30, 33, 41, 0.52)",
     border="rgba(255, 255, 255, 0.14)",
     separator="rgba(255, 255, 255, 0.08)",
     text="#EAEDF4", muted="#A3ACBC", faint="#6E7787",
@@ -69,10 +69,10 @@ DARK = Palette(
 
 LIGHT = Palette(
     key="light", name="日间",
-    window_tint="rgba(248, 250, 253, 0.42)",
-    card="rgba(255, 255, 255, 0.55)",
-    card_hover="rgba(255, 255, 255, 0.74)",
-    card_strong="rgba(252, 253, 255, 0.90)",
+    window_tint="rgba(248, 250, 253, 0.22)",
+    card="rgba(255, 255, 255, 0.30)",
+    card_hover="rgba(255, 255, 255, 0.46)",
+    card_strong="rgba(252, 253, 255, 0.58)",
     border="rgba(0, 0, 0, 0.10)",
     separator="rgba(0, 0, 0, 0.06)",
     text="#1A1E26", muted="#5A6472", faint="#8A93A1",
@@ -238,4 +238,22 @@ def build_qss(p: Palette, *, frameless: bool = True) -> str:
     QMenu::item {{ padding: 6px 18px; border-radius: 6px; }}
     QMenu::item:selected {{ background: {p.accent}; color: {p.accent_text}; }}
     QSplitter::handle {{ background: {p.separator}; }}
+
+    /* ================= 关键：禁止"实底"，否则会盖住 DWM 材质 =================
+       用户实测现象：**只有最顶部标题栏那条是模糊的，主页面还是黑的**。
+       原因就是下面这些控件在部分平台会画自己的不透明底，
+       而 DWM 的亚克力画在窗口**背后** —— 被盖住就彻底看不到了。
+       必须显式声明透明，让材质透上来。 ================= */
+    QMainWindow, QDialog, QWidget#Root, QTabWidget, QStackedWidget {{
+        background: transparent;
+    }}
+    QScrollArea, QAbstractScrollArea,
+    QScrollArea > QWidget > QWidget,
+    QScrollArea > QWidget > QViewport {{
+        background: transparent;
+        border: none;
+    }}
+    QAbstractItemView, QTreeView, QListView, QTableView, QHeaderView {{
+        background: transparent;
+    }}
     """

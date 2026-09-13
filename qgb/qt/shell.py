@@ -149,6 +149,11 @@ class Shell(QMainWindow):
     def _build_ui(self) -> None:
         root = QWidget()
         root.setObjectName("Root")
+        # 原生材质模式下**绝不能**让中央控件画实底：那会盖住 DWM 材质
+        # （实测现象：只有最顶部标题栏那条模糊，主内容区是黑的）。
+        root.setAutoFillBackground(False)
+        if not self.frameless:
+            root.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setCentralWidget(root)
 
         outer = QVBoxLayout(root)
@@ -195,6 +200,13 @@ class Shell(QMainWindow):
         # ---- 标签页
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
+        # 标签页容器与每个页面都必须透明，否则会把窗口背后的材质挡住
+        if not self.frameless:
+            self.tabs.setAutoFillBackground(False)
+            self.tabs.setStyleSheet(
+                "QTabWidget, QTabWidget::pane, QStackedWidget "
+                "{ background: transparent; }"
+            )
         outer.addWidget(self.tabs, 1)
 
         self.pages: list[Page] = []

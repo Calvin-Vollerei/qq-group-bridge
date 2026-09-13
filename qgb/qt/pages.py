@@ -71,6 +71,14 @@ class MonitorPage(Page):
         area = QScrollArea()
         area.setWidgetResizable(True)
         area.setFrameShape(QScrollArea.Shape.NoFrame)
+        # 滚动区与它的 viewport 默认会画一层底，会把窗口背后的 DWM 材质挡住
+        # （用户实测：只有标题栏那条模糊，主内容区黑的）。
+        area.setStyleSheet(
+            "QScrollArea, QScrollArea > QWidget > QWidget, QScrollArea > QWidget "
+            "{ background: transparent; border: none; }"
+        )
+        area.viewport().setAutoFillBackground(False)
+        area.setAutoFillBackground(False)
 
         root = QWidget()
         lay = QVBoxLayout(root)
