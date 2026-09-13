@@ -118,8 +118,15 @@ class Shell(QMainWindow):
         self.setWindowTitle("QQ群文件搬运工")
         self.setMinimumSize(880, 560)
         self.resize(1080, 720)
-        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        # ⚠️ 窗口外观由毛玻璃路线决定（见 glass.GlassCapability.requires_frameless）：
+        #    原生材质（A/B）必须用**系统边框**且**不设** WA_TranslucentBackground，
+        #    否则 Qt 自绘的背景会盖住 DWM 的材质 —— 实测就是"没有毛玻璃、只有半透明块"。
+        #    自绘路线（C）才用无边框 + 半透明 + 自绘圆角。
+        self.frameless = self.capability.requires_frameless
+        if self.frameless:
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
         # ⚠️ bridge 必须在 _build_ui() **之前**创建：页面在构造时就会取它
         #    （Page.__init__ 里 self.bridge = shell.bridge），否则报
@@ -129,7 +136,10 @@ class Shell(QMainWindow):
         self.bridge.event.connect(self._on_event)
 
         self._build_ui()
-        self._install_drag_and_resize()
+        if self.frameless:
+            # 只有无边框窗口才需要自己实现拖动与边缘缩放；
+            # 系统边框模式下安装它反而会抢事件（容易出怪现象）。
+            self._install_drag_and_resize()
 
         self.apply_theme(self.theme_key)
         QTimer.singleShot(0, self._apply_glass)     # 等窗口有 HWND 后再上材质
@@ -142,7 +152,9 @@ class Shell(QMainWindow):
         self.setCentralWidget(root)
 
         outer = QVBoxLayout(root)
-        outer.setContentsMargins(10, 10, 10, 10)
+        # 系统边框模式下不需要外边距（窗口已经有边框）；
+        # 无边框模式下也不能留边距 —— 那 10px 会露出窗口的透明底，看起来是一圈黑边。
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(8)
 
         # ---- 标题栏（自绘）
@@ -164,23 +176,20 @@ class Shell(QMainWindow):
         self.btn_theme.clicked.connect(self.toggle_theme)
         bar.addWidget(self.btn_theme)
 
-        self.btn_min = QPushButton("—")
-        self.btn_min.setObjectName("Ghost")
-        self.btn_min.setFixedWidth(38)
-        self.btn_min.clicked.connect(self.showMinimized)
-        bar.addWidget(self.btn_min)
+        # 自绘窗口按钮只在无边框模式下需要；系统边框自带最小化/最大化/关闭，
+        # 再放一套既重复、又容易和拖动逻辑抢事件（实测"点一下就隐藏"多半源于此）。
+        if self.frameless:
+            self.btn_min = QPushButton("—")
+            self.btn_min.setObjectName("Ghost")
+            self.btn_min.setFixedWidth(38)
+            self.btn_min.clicked.connect(self.showMinimized)
+            bar.addWidget(self.btn_min)
 
-        self.btn_max = QPushButton("▢")
-        self.btn_max.setObjectName("Ghost")
-        self.btn_max.setFixedWidth(38)
-        self.btn_max.clicked.connect(self._toggle_max)
-        bar.addWidget(self.btn_max)
-
-        self.btn_close = QPushButton("✕")
-        self.btn_close.setObjectName("Ghost")
-        self.btn_close.setFixedWidth(38)
-        self.btn_close.clicked.connect(self.close)
-        bar.addWidget(self.btn_close)
+            self.btn_close = QPushButton("✕")
+            self.btn_close.setObjectName("Ghost")
+            self.btn_close.setFixedWidth(38)
+            self.btn_close.clicked.connect(self.close)
+            bar.addWidget(self.btn_close)
         outer.addLayout(bar)
 
         # ---- 标签页
@@ -238,8 +247,10 @@ class Shell(QMainWindow):
         palette = themes.get(self.theme_key)
 
         # 自绘路线要做圆角底；原生材质时让窗口背景全透明，交给系统画
-        frameless = not self.capability.is_native
-        self.setStyleSheet(themes.build_qss(palette, frameless=frameless))
+        # 只有自绘路线才给 Root 画圆角半透明底；原生路线把背景交给系统材质
+        self.setStyleSheet(
+            themes.build_qss(palette, frameless=self.frameless)
+        )
         self.btn_theme.setText(f"主题：{palette.name}")
 
         for page in getattr(self, "pages", []):
@@ -267,12 +278,11 @@ class Shell(QMainWindow):
         self.toast.show(f"已切换到{themes.get(self.theme_key).name}主题", "info")
 
     def _toggle_max(self) -> None:
+        """保留入口（无边框模式的历史用法）；系统边框模式下由系统处理。"""
         if self.isMaximized():
             self.showNormal()
-            self.btn_max.setText("▢")
         else:
             self.showMaximized()
-            self.btn_max.setText("❐")
 
     # ------------------------------------------------------------ 事件
 
@@ -324,7 +334,11 @@ class Shell(QMainWindow):
         self._resize_edge = None
         self._resize_start = None
         self.setMouseTracking(True)
-        QApplication.instance().installEventFilter(self)
+        # ⚠️ 事件过滤器只装在自己身上，**不要**装到 QApplication 上。
+        #    踩过的坑：装到 app 上后它会拦截所有控件的鼠标事件，
+        #    用户反馈"点一下空白窗口就隐藏了" —— 这类全局过滤器是典型来源。
+        #    原生材质模式（系统边框）下系统自己处理缩放，压根不需要它。
+        self.installEventFilter(self)
 
     def _edge_at(self, pos) -> str:
         m = _RESIZE_MARGIN
@@ -342,6 +356,8 @@ class Shell(QMainWindow):
         return "".join(edges)
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
+        if obj is not self:
+            return False                      # 不干预其它控件的事件
         if event.type() == QEvent.Type.MouseMove and not self.isMaximized():
             pos = self.mapFromGlobal(QCursor.pos())
             if self.rect().contains(pos):

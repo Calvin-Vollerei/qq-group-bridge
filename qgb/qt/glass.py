@@ -59,6 +59,18 @@ class GlassCapability:
     detail: str = ""
 
     @property
+    def requires_frameless(self) -> bool:
+        """该路线是否需要无边框自绘窗口。
+
+        ⚠️ **原生材质必须用系统边框**：DWM 的 Mica/Acrylic 画在窗口背后，
+        窗口自己再画一层背景（无边框时必然要画圆角底）就会把材质盖住 ——
+        实测现象就是"只有半透明色块，没有毛玻璃"。
+
+        反过来，自绘路线（C）需要无边框 + 自绘半透明底 + 自绘圆角。
+        """
+        return not self.is_native
+
+    @property
     def is_native(self) -> bool:
         return self.route in ("A", "B")
 
