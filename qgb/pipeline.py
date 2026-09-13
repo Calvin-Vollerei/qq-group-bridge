@@ -378,11 +378,27 @@ class Pipeline:
         # 用户可在「监控」页的搬运记录里置顶 / 上移下移来改变下载顺序。
         pending = self.store.pending_ordered(limit=limit)
 
+        #: 本次筛选内已经处理过的文件（含失败的）。
+        #:
+        #: ⚠️ 为什么必须有这个跳过逻辑：``_handle_failure`` 会把文件 mark 回
+        #: ``DISCOVERED``（并 attempts+1），而本循环遍历的是**开始时取的快照**。
+        #: 于是队首那个失败的文件会被**立刻重新处理**：一个坏文件连续占满
+        #: 3 次重试，后面的文件一直排不上队 —— 用户看到的是"卡在一个文件上"。
+        #: 正确行为：同一批内先跳到下一个文件，**下次循环**再回来重试它
+        #: （重试退避由循环间隔自然实现）。
+        attempted: set[tuple[str, int, str]] = set()
+
         for row in pending:
             if self._stop.is_set():
                 return
             if self._pause.is_set():
                 return
+
+            key = (str(row["group_id"]), int(row["busid"]), str(row["file_id"]))
+            if key in attempted:
+                continue
+            attempted.add(key)
+
             try:
                 self._process_row(row)
             except QgbError as exc:

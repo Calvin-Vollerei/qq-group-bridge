@@ -292,7 +292,7 @@ Write-Step '6/6  生成可分发包并扫描'
 Invoke-Native -What '生成可分发包' -Exe 'python' -Arguments @(
     'scripts/make_release_zip.py', '--release-dir', $ReleaseDir
 ) -Tail 12
-$DistZip = Join-Path $DistDir 'qgb-v1.2-app-only.zip'
+$DistZip = Join-Path $DistDir 'qgb-v1.3-app-only.zip'
 Write-Ok "可分发包已生成：$DistZip"
 
 # ---------------------------------------------------------------- 汇总
@@ -310,7 +310,7 @@ Write-Host "  体积     : $sizeMb MB（$fileCount 个文件，含本机 data\�
 Write-Host "  可分发包 : $DistZip  ($zipMb MB)"
 Write-Host ''
 Write-Host '  分发给朋友的步骤：' -ForegroundColor Cyan
-Write-Host "    1. 只发「qgb-v1.2-app-only.zip」这一个文件（GitHub Release 资产名统一用 ASCII）"
+Write-Host "    1. 只发「qgb-v1.3-app-only.zip」这一个文件（GitHub Release 资产名统一用 ASCII）"
 Write-Host '       （它已排除 data\、logs\、凭据库与状态库，并已扫描通过）'
 Write-Host '    2. 对方解压后双击「启动搬运工.bat」'
 Write-Host '    3. 按界面提示完成 群号 / 网盘 / QQ 三步配置'

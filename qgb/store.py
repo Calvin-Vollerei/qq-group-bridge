@@ -398,6 +398,28 @@ class StateStore:
 
     # -------------------------------------------------- 运行期 KV
 
+    def list_files(self, *, search: str = "", limit: int = 2000) -> list[dict[str, Any]]:
+        """全量文件列表（transfers 联 files 取上传时间），支持按文件名/群号搜索。
+
+        为什么要联表：``upload_time``（文件在群里上传的时间）在 ``files`` 表，
+        而状态在 ``transfers`` 表 —— 界面要能"按上传时间排序"，就必须一起取。
+        """
+        sql = (
+            "SELECT t.*, f.upload_time AS upload_time, f.uploader_name AS uploader_name "
+            "FROM transfers t LEFT JOIN files f "
+            "  ON f.group_id=t.group_id AND f.busid=t.busid AND f.file_id=t.file_id "
+        )
+        params: list[Any] = []
+        term = (search or "").strip()
+        if term:
+            sql += "WHERE t.name LIKE ? OR t.group_id LIKE ? "
+            params.extend([f"%{term}%", f"%{term}%"])
+        sql += "ORDER BY t.updated_at DESC LIMIT ?"
+        params.append(int(limit))
+        with self._lock:
+            cur = self._conn.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
+
     def set_kv(self, key: str, value: str) -> None:
         with self._write() as conn:
             conn.execute(

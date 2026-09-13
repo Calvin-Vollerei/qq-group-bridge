@@ -429,6 +429,27 @@ class AppController:
 
     # ================================================================ 下载顺序
 
+    def list_files(self, *, search: str = "", limit: int = 2000) -> list[dict[str, Any]]:
+        """界面用：全量文件列表（含上传时间），支持搜索。
+
+        返回顺序 = **下载顺序**（置顶 → 手工顺序 → 未排序按发现时间），
+        也就是"按下载顺序"那一档排序时所见即所得；界面上的其它排序档
+        由 GUI 自己在本地重排（数据量在千级，够快且直观）。
+        """
+        if self.store is None:
+            return []
+        try:
+            rows = self.store.list_files(search=search, limit=limit)
+        except QgbError:
+            return []
+        # 把待处理项按队列顺序提前，其余保持"最近处理在前"
+        queue = {self._key(r): i for i, r in enumerate(self.queue_ordered(limit=1000))}
+        pending, others = [], []
+        for r in rows:
+            (pending if self._key(r) in queue else others).append(r)
+        pending.sort(key=lambda r: queue[self._key(r)])
+        return pending + others
+
     def queue_ordered(self, limit: int = 500) -> list[dict[str, Any]]:
         """待下载队列（**已按下载顺序**排好）。
 
