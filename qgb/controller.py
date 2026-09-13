@@ -557,6 +557,21 @@ class AppController:
         """置顶到第一位（与 queue_pin(pinned=True) 等价，便于界面直连）。"""
         return self.queue_pin(key, pinned=True)
 
+    def reset_discovery(self) -> dict[str, int]:
+        """清空累计的待处理/过滤/失败记录，让下次扫描重新发现。
+
+        用于"记录越积越多、队列里全是陈旧项"的情况。**保留**已搬完的记录（去重依据）。
+        """
+        if self.store is None:
+            return {"removed": 0}
+        result = self.store.reset_discovery()
+        self._post(
+            "info",
+            f"已清空累计记录（{result.get('removed', 0)} 条），"
+            "下次扫描会重新发现群内文件",
+        )
+        return result
+
     def requeue_failed(self) -> int:
         store = self.store
         if store is None:

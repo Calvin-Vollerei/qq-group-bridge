@@ -84,6 +84,8 @@ class MonitorTab(Tab):
         self.btn_once = ttk.Button(mini, text="🔄  立即刷新（拉取新文件）",
                                    style="Accent.TButton", command=self._run_once)
         self.btn_once.pack(side="left")
+        ttk.Button(mini, text="清空记录并重新发现", style="Ghost.TButton",
+                   command=self._reset_discovery).pack(side="left", padx=(8, 0))
         ttk.Button(mini, text="重试失败项", style="Ghost.TButton",
                    command=self._requeue).pack(side="left", padx=(8, 0))
         ttk.Button(mini, text="📋  文件列表 / 下载顺序", style="Ghost.TButton",
@@ -228,6 +230,30 @@ class MonitorTab(Tab):
         if self.controller.run_once_now():
             self.toast("正在执行一轮搬运…", "info")
 
+    def _reset_discovery(self) -> None:
+        """清空累计的待处理/过滤/失败记录，让下次扫描重新发现。
+
+        界面上「待处理」是**累计**值：一次全量扫描会把群里所有文件都登记进来，
+        之后即使文件已被删除或用户不想搬，记录也会一直留着，队列越积越多。
+        """
+        if not messagebox.askyesno(
+            "清空记录并重新发现",
+            "将清空「待处理 / 已过滤 / 失败」的累计记录，"
+            "然后重新扫描群文件。\n\n"
+            "· 已搬完的记录会保留（用于去重，不会重复上传）\n"
+            "· 下次扫描会按当前群文件重新建立待办列表\n\n"
+            "确定继续吗？",
+        ):
+            return
+        try:
+            result = self.controller.reset_discovery()
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("清空失败", f"{type(exc).__name__}: {exc}")
+            return
+        self.toast(f"已清空 {result.get('removed', 0)} 条累计记录，"
+                   "点「立即刷新」重新发现群文件", "success")
+        self.refresh()
+
     def _requeue(self) -> None:
         n = self.controller.requeue_failed()
         self.toast(f"已把 {n} 个失败项重新排队", "success" if n else "muted")
@@ -247,7 +273,12 @@ class MonitorTab(Tab):
 
         win = tk.Toplevel(self)
         win.title("文件列表与下载顺序")
-        win.geometry("1060x680")
+        # 自适应：按屏幕尺寸取，避免固定宽度下按钮被挤出可视区（用户实测反馈）
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        w = max(900, min(int(sw * 0.92), 1500))
+        h = max(560, min(int(sh * 0.85), 940))
+        win.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 3)}")
+        win.minsize(880, 520)
         win.configure(bg=Palette.BG)
         win.transient(self.winfo_toplevel())
 
@@ -348,20 +379,23 @@ class MonitorTab(Tab):
             "name": "name", "group": "group", "size": "size",
             "uptime": "time", "updated": "updated",
         }
-        for col, text, width in (
-            ("pin", "★", 34),
-            ("name", "文件名", 330),
-            ("group", "群号", 100),
-            ("size", "大小", 90),
-            ("uptime", "上传时间", 140),
-            ("state", "状态", 84),
-            ("updated", "处理时间", 140),
+        # 列宽：写死像素的旧做法在窄屏上会把后几列挤出去。
+        # 这里给出**建议宽度 + 伸缩权重**：文件名占掉多余空间，其余列固定。
+        for col, text, width, weight in (
+            ("pin", "★", 34, 0),
+            ("name", "文件名", 340, 1),        # 唯一可伸缩列
+            ("group", "群号", 100, 0),
+            ("size", "大小", 90, 0),
+            ("uptime", "上传时间", 130, 0),
+            ("state", "状态", 84, 0),
+            ("updated", "处理时间", 130, 0),
         ):
             tree.heading(col, text=text,
                          command=(lambda c=col: (
                              sort_col.set(col_map.get(c, "queue")), on_sort()
                          )) if col in col_map else "")
-            tree.column(col, width=width, anchor="w")
+            tree.column(col, width=width, minwidth=50,
+                        stretch=bool(weight), anchor="w")
 
         scroll = ttk.Scrollbar(wrap, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=scroll.set)

@@ -430,7 +430,10 @@ class Pipeline:
         # **不 +1 重试次数**，稍后自然重试。否则一次组件状态抖动就会把
         # 整批文件永久标成「失败」，用户看到的是"任务不推进"。
         if isinstance(exc, TransientError):
-            self.store.mark(key, TransferState.DISCOVERED, error=message)
+            # 设冷却：否则下一轮它又排队首，把尝试名额全吃掉（见 config 里的说明）
+            cooldown = float(getattr(self.cfg.monitor, "transient_cooldown_sec", 300.0))
+            self.store.mark(key, TransferState.DISCOVERED, error=message,
+                            retry_after=cooldown)
             self._emit(
                 "log",
                 f"暂时跳过（稍后自动重试）：{row['name']} —— {message}",

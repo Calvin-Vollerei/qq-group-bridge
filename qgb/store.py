@@ -116,6 +116,11 @@ class StateStore:
     _ADDED_COLUMNS = (
         ("transfers", "manual_order", "INTEGER NOT NULL DEFAULT 0"),
         ("transfers", "pinned", "INTEGER NOT NULL DEFAULT 0"),
+        #: 冷却截止时间（unix 秒）。临时性故障（如 NapCat 的 fileUUID 未就绪）
+        #: 用完必须设一个冷却，否则它**立刻又排到队首**、把新一轮尝试全吃掉。
+        #: 实测踩过：几十条旧记录每轮都失败且不消耗重试次数，队首永远被它们占着，
+        #: 新文件一直轮不到 —— 用户看到的就是"下载始终不开始"。
+        ("transfers", "retry_at", "REAL NOT NULL DEFAULT 0"),
     )
 
     def _migrate(self) -> None:
@@ -182,13 +187,15 @@ class StateStore:
             # ⚠️ 不能直接 ``ORDER BY manual_order``：未手工排过的行 manual_order=0，
             #    而 0 < 10，会让它们插到已排序的行**中间**。
             #    正确做法：没排过（=0）的当作"极大值"排到最后，仍按发现时间先入先出。
+            now = time.time()
             cur = self._conn.execute(
-                "SELECT * FROM transfers WHERE state=? "
+                # 冷却中的（retry_at > now）先跳过，让其它文件有机会被处理
+                "SELECT * FROM transfers WHERE state=? AND retry_at<=? "
                 "ORDER BY pinned DESC, "
                 "         CASE WHEN manual_order>0 THEN manual_order ELSE 2147483647 END, "
                 "         created_at, rowid "
                 "LIMIT ?",
-                (TransferState.DISCOVERED.value, int(limit)),
+                (TransferState.DISCOVERED.value, now, int(limit)),
             )
             return [dict(r) for r in cur.fetchall()]
 
@@ -312,6 +319,7 @@ class StateStore:
         sha256: str | None = None,
         error: str | None = None,
         bump_attempts: bool = False,
+        retry_after: float | None = None,
     ) -> None:
         sets = ["state=?", "updated_at=?"]
         params: list[Any] = [state.value, time.time()]
@@ -329,6 +337,10 @@ class StateStore:
             params.append(error)
         if bump_attempts:
             sets.append("attempts=attempts+1")
+        if retry_after is not None:
+            # 冷却：这段时间内不把它排进待处理队列（见 pending_ordered）
+            sets.append("retry_at=?")
+            params.append(time.time() + max(0.0, float(retry_after)))
 
         params.extend([key[0], int(key[1]), str(key[2])])
         with self._write() as conn:
@@ -349,6 +361,36 @@ class StateStore:
                 [TransferState.DISCOVERED.value, time.time(), *[s.value for s in states]],
             )
             return cur.rowcount
+
+    def reset_discovery(self) -> dict[str, int]:
+        """清空「待处理 / 已过滤 / 失败」等记录，让下次扫描**重新发现**。
+
+        为什么需要：``transfers`` 是**累计**的。一次全量扫描会把群里所有文件都
+        登记成「待处理」，之后即使文件已从群里删除、或用户根本不想搬，记录也会
+        永远留在队列里。实测用户库里积了 48,035 条「待处理」，最早的是**前一天**
+        留下的 —— 队列一直在处理陈旧记录，真正的新文件反而轮不到。
+
+        **保留**已完成/已上传/已跳过：它们是去重依据，删掉会导致全部重新下载。
+        """
+        purged = [
+            "discovered", "filtered_out", "failed", "expired",
+            "downloading", "downloaded", "uploading",
+        ]
+        placeholders = ",".join("?" for _ in purged)
+        with self._write() as conn:
+            before = {
+                row["state"]: int(row["n"])
+                for row in conn.execute(
+                    "SELECT state, COUNT(*) n FROM transfers GROUP BY state"
+                ).fetchall()
+            }
+            cur = conn.execute(
+                f"DELETE FROM transfers WHERE state IN ({placeholders})", purged
+            )
+            conn.commit()
+        removed = int(cur.rowcount or 0)
+        log.info("已重置发现：清除 %s 条待处理/过滤/失败记录（保留已搬完的去重记录）", removed)
+        return {"removed": removed, **{f"before_{k}": v for k, v in before.items()}}
 
     def requeue(self, states: Sequence[TransferState] = (TransferState.FAILED,)) -> int:
         """把失败（或指定状态）的任务重新排队，供 GUI 的「重试失败项」使用。"""
