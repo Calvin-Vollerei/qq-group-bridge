@@ -20,7 +20,7 @@ from urllib.parse import quote
 import requests
 from requests.auth import HTTPBasicAuth
 
-from ..errors import UploadError
+from ..errors import TransientError, UploadError
 from ..secrets import (
     KEY_NETDISK_WEBDAV_PASSWORD,
     KEY_NETDISK_WEBDAV_USERNAME,
@@ -257,6 +257,20 @@ class WebDAVUploader(Uploader):
                 raise UploadError(
                     "网盘空间不足（507）",
                     hint="请清理网盘空间后重试。",
+                )
+            if resp.status_code == 405:
+                # 实测（本机 OpenList + 百度驱动）：同一个目录里绝大多数 PUT 返回 201，
+                # 少数返回 405，且成功/失败的文件名特征没有差别（都含中文/空格/括号）。
+                # 说明这不是权限、也不是文件名合法性问题，而是驱动侧的偶发拒绝
+                # （限流/上游抖动）。所以归为**可重试**，不要一次就判死。
+                raise TransientError(
+                    "网盘暂时拒绝接收（HTTP 405）",
+                    hint=(
+                        "这通常是网盘侧的限流或临时抖动：同一目录里其它文件都能上传成功。\n"
+                        "本工具会自动重试。若长期大量出现，请检查：\n"
+                        "  · OpenList 里该账号是否有 WebDAV 写权限（用户页）\n"
+                        "  · 百度网盘空间是否已满"
+                    ),
                 )
             raise UploadError(f"上传失败：服务器返回 {resp.status_code}")
 

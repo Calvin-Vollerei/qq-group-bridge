@@ -113,11 +113,15 @@ class PinnedGoesFirstTest(PipelineCase):
 
         pipeline.run_once()
 
-        # 终态是 DONE（走完 发现→下载→上传→完成 全流程），不是 UPLOADED
+        # 语义说明（v1.9 起）：置顶/优先项**独占第一批**，所以首轮只搬它；
+        # 其余文件在下一轮继续。这样用户点完「优先执行」能立刻在日志里看到
+        # 自己那批，而不是混在 200 个普通项里。
         self.assertEqual(store.get_transfer((GROUP, 102, "f-xlsx"))["state"],
                          TransferState.DONE.value, "置顶的文件没有被优先搬运")
+
+        pipeline.run_once()          # 第二轮处理其余
         self.assertEqual(store.get_transfer((GROUP, 102, "f-pdf"))["state"],
-                         TransferState.DONE.value, "另一个文件也该被搬走")
+                         TransferState.DONE.value, "其余文件在下一轮也该被搬走")
 
     def test_manual_order_is_respected_for_unpinned(self) -> None:
         _pipeline, store, _events = self.build()

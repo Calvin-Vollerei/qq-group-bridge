@@ -434,13 +434,19 @@ class Pipeline:
         # 用户可在「监控」页的搬运记录里置顶 / 上移下移来改变下载顺序。
         pending = self.store.pending_ordered(limit=limit)
 
-        # 置顶项绝对优先：把置顶的提到最前，未置顶的顺次后移。
-        # 用户实测反馈"置顶不是那么有效"——只把它排到已排序段之前还不够，
-        # 因为队列里可能还有几百个更早的未排序项；这里直接交换位置，
-        # 保证置顶项就是下一批被处理的。
+        # 置顶/优先的项**独占第一批**。
+        #
+        # 用户实测反馈"优先下载、置顶还是不起效果"。原因不是排序没生效，而是
+        # 每轮会处理 limit 个（默认 200），置顶项虽然排在第一位，却和 199 个普通
+        # 项混在**同一批**里跑；用户盯着日志看，前面几十条都是别的文件，
+        # 主观感受就是"没效果"。
+        # 现在先只跑置顶/优先的那批（通常只有几个到几十个），跑完再继续其余。
+        # 下一轮（或本轮同一 _drain_pending 内）接着处理普通项，进度不受影响。
         pinned = [r for r in pending if r.get("pinned")]
         if pinned:
-            pending = pinned + [r for r in pending if not r.get("pinned")]
+            pending = pinned
+        else:
+            pending = pending
 
         #: 本次筛选内已经处理过的文件（含失败的）。
         #:

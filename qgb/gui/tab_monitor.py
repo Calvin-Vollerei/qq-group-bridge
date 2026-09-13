@@ -274,11 +274,34 @@ class MonitorTab(Tab):
         win = tk.Toplevel(self)
         win.title("文件列表与下载顺序")
         # 自适应：按屏幕尺寸取，避免固定宽度下按钮被挤出可视区（用户实测反馈）
+        # 自适应要点（用户反馈"拓展窗口不能自适应 Win 的多窗口"）：
+        #   1. 以**主窗口当前所在显示器**的工作区为准，而不是主屏 ——
+        #      多屏时 `winfo_screenwidth()` 只反映主屏，窗口会被放到别的屏外；
+        #   2. 用 Tk 的 scaling 与屏幕尺寸取合理比例，并保证不小于最小可用尺寸；
+        #   3. 允许自由拉伸，列宽靠 stretch 分配（文件名列占剩余空间）。
+        win.update_idletasks()
+        root = self.winfo_toplevel()
+        scale = float(win.tk.call("tk", "scaling")) or 1.0
+
+        # 主窗口位置 + 尺寸 → 推断所在显示器；取不到就退回整屏尺寸
+        rx, ry = root.winfo_rootx(), root.winfo_rooty()
+        rw, rh = root.winfo_width(), root.winfo_height()
         sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-        w = max(900, min(int(sw * 0.92), 1500))
-        h = max(560, min(int(sh * 0.85), 940))
-        win.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 3)}")
-        win.minsize(880, 520)
+        # 显示器近似区域：以主窗口为中心、整屏为界的裁切
+        left = max(0, rx - rw // 2)
+        top = max(0, ry - rh // 2)
+        avail_w = max(800, sw - left)
+        avail_h = max(520, sh - top)
+
+        w = int(max(880 * scale / 1.33, min(avail_w * 0.95, 1500)))
+        h = int(max(520 * scale / 1.33, min(avail_h * 0.88, 960)))
+        x = left + max(0, (avail_w - w) // 2)
+        y = top + max(0, (avail_h - h) // 3)
+        win.geometry(f"{w}x{h}+{x}+{y}")
+        win.minsize(860, 500)
+        # 允许最大化与自由缩放；行/列都按窗口拉伸
+        win.rowconfigure(0, weight=0)
+        win.resizable(True, True)
         win.configure(bg=Palette.BG)
         win.transient(self.winfo_toplevel())
 
