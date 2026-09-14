@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -341,48 +342,78 @@ class NetdiskPage(Page):
     # ------------------------------------------------------------ OpenList
 
     def _openlist(self):
+        """构造 OpenList 管理器。
+
+        ⚠️ 真实签名是 ``OpenListManager(cfg.upload, *, app_base=, data_dir=, log_dir=)``
+        —— 早期我写成 ``OpenListManager(config, data_dir)``（参数个数与类型都错），
+        导致这一页的 OpenList 按钮一点就抛 TypeError（表现为"OpenList 坏了"）。
+        这里按真实签名构造；``app_base`` 指向程序根目录，迁移路径后自动跟着走。
+        """
         from ..openlist import OpenListManager
 
-        return OpenListManager(self.controller.config, self.controller.data_dir)
+        # controller.data_dir 在 load() 时就确定了（默认数据目录或 QGB_DATA_DIR），
+        # 直接用它最稳 —— 早期我误从 qgb.paths 导入 default_data_dir（那里没有这个名字），
+        # 于是整段抛 ImportError，表现仍是"OpenList 坏了"。
+        app_base = Path(__file__).resolve().parent.parent.parent
+        data_dir = self.controller.data_dir
+        if data_dir is None:
+            data_dir = app_base / "dist" / "QQ群文件搬运工" / "data"
+        return OpenListManager(
+            self.controller.config.upload,
+            app_base=app_base,
+            data_dir=Path(data_dir),
+        )
 
     def _refresh_openlist(self) -> None:
         try:
             status = self._openlist().status()
         except Exception as exc:  # noqa: BLE001
             self.ol_badge.set_state("idle", "未知")
-            self.ol_info.setText(f"（无法获取 OpenList 状态：{type(exc).__name__}）")
+            self.ol_info.setText(f"（无法获取 OpenList 状态：{type(exc).__name__}: {exc}）")
             return
         running = bool(getattr(status, "running", False))
-        url = getattr(status, "base_url", "") or getattr(status, "url", "")
-        self.ol_badge.set_state("ok" if running else "idle",
-                                "运行中" if running else "未运行")
+        installed = bool(getattr(status, "installed", False))
+        if running:
+            self.ol_badge.set_state("ok", "运行中")
+        elif installed:
+            self.ol_badge.set_state("warn", "已安装未运行")
+        else:
+            self.ol_badge.set_state("idle", "未找到")
+        note = str(getattr(status, "note", "") or "")
         self.ol_info.setText(
-            f"地址：{url or '—'}　|　可执行文件：{getattr(status, 'binary', '') or '—'}"
+            f"管理后台：{getattr(status, 'webui_url', '') or '—'}\n"
+            f"WebDAV ：{getattr(status, 'webdav_url', '') or '—'}\n"
+            f"可执行文件：{getattr(status, 'exe', '') or '—'}"
+            + (f"\n状态说明：{note}" if note else "")
         )
 
     def _start_openlist(self) -> None:
+        self.ol_badge.set_state("info", "启动中…")
         try:
-            ok = self._openlist().start()
-            self.toast.show("OpenList 已启动" if ok else "启动失败，请看日志",
-                            "success" if ok else "error")
-            self._refresh_openlist()
+            status = self._openlist().start()      # 内部会等待就绪
+            ok = bool(getattr(status, "running", False))
+            self.toast.show(
+                "OpenList 已启动" if ok else "启动未成功，请看下方状态说明",
+                "success" if ok else "warning",
+            )
         except Exception as exc:  # noqa: BLE001
             self.toast.show(f"启动失败：{type(exc).__name__}: {exc}", "error")
+        self._refresh_openlist()
 
     def _stop_openlist(self) -> None:
         try:
             self._openlist().stop()
             self.toast.show("已请求停止 OpenList（仅限本程序启动的）", "info")
-            self._refresh_openlist()
         except Exception as exc:  # noqa: BLE001
-            self.toast.show(f"停止失败：{type(exc).__name__}", "error")
+            self.toast.show(f"停止失败：{type(exc).__name__}: {exc}", "error")
+        self._refresh_openlist()
 
     def _open_openlist(self) -> None:
         import webbrowser
 
         try:
-            url = getattr(self._openlist().status(), "base_url", "") or \
-                "http://127.0.0.1:5244"
+            status = self._openlist().status()
+            url = getattr(status, "webui_url", "") or "http://127.0.0.1:5244"
             webbrowser.open(url)
             self.toast.show("已打开 OpenList 管理后台", "info")
         except Exception as exc:  # noqa: BLE001
