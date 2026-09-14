@@ -22,8 +22,8 @@
 
 param(
     [string]$Repo = 'Calvin-Vollerei/qq-group-bridge',
-    [string]$Tag  = 'v1.9',
-    [string]$Version = 'v1.9',   # 决定要上传哪个 dist\qgb-<Version>-*.zip
+    [string]$Tag  = 'v2.0',
+    [string]$Version = 'v2.0',   # 决定要上传哪个 dist\qgb-<Version>-*.zip
     [string]$Dist = 'dist',
     [switch]$OnlySmall
 )
