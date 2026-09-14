@@ -224,6 +224,20 @@ class Shell(QMainWindow):
         self.pages: list[Page] = []
         for factory in self._page_factories():
             page = factory(self)
+            # ⚠️ **必须调用 build() 并把返回的控件挂到页面上。**
+            #    踩过的坑：早期只写了 ``self.tabs.addTab(page, ...)``，
+            #    build() 从未被调用 —— 于是每个标签页都是一个**空壳**
+            #    （子控件数 0、不透明像素 1%），用户看到的是"打开没有内容"。
+            #    这就是"源码能跑、界面却是空白"的根因。
+            content = page.build()
+            if content is not None:
+                # 注意：不要在函数内 import QVBoxLayout —— 那会让 Python 把整个
+                # 函数作用域里的该名字视为局部变量，导致上面的 QVBoxLayout(root)
+                # 报 UnboundLocalError（实测踩到过）。模块顶部已导入。
+                lay = page.layout() or QVBoxLayout(page)
+                lay.setContentsMargins(0, 0, 0, 0)
+                lay.setSpacing(0)
+                lay.addWidget(content)
             self.pages.append(page)
             self.tabs.addTab(page, page.title)
 

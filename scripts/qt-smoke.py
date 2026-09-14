@@ -88,8 +88,15 @@ def main() -> int:
                     for y in range(0, ih, max(1, ih // 32))
                     if (img.pixel(x, y) >> 24) & 0xFF > 8
                 )
-                detail += f" 色数={len(colors)} 不透明样本={opaque}"
-                if len(colors) < 3 and opaque < 5:
+                # ⚠️ 判据必须包含"**有没有子控件**" ——
+                #    踩过的坑：只按"颜色种类"判断时，一个**空壳页面**
+                #    （build() 没被调用、子控件数为 0）也会被判成通过，
+                #    于是我一路绿灯交付了"打开没有内容"的 exe。
+                children = len(page.findChildren(object))
+                detail += f" 控件={children} 色数={len(colors)} 不透明样本={opaque}"
+                if children < 5:
+                    status, detail = "fail", detail + "（页面是空壳：build 未生效）"
+                elif len(colors) < 3 and opaque < 5:
                     status, detail = "fail", detail + "（疑似空白）"
                 detail += f" → {out.name}"
             results.append((title, status, detail))
