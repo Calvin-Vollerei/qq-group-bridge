@@ -22,6 +22,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -112,7 +113,7 @@ class AdvancedPage(Page):
         rel = grid_card("失败处理", [
             ("max_retries", "3", "单文件最大重试次数"),
             ("retry_backoff_sec", "30", "重试退避基数（秒）"),
-            ("keep_local_days", "0", "本地副本保留天数"),
+
             ("stall_timeout_sec", "20.0", "下载卡死阈值（秒）"),
         ])
         rel.add(Hint(
@@ -128,6 +129,75 @@ class AdvancedPage(Page):
             ("min_free_disk_gb", "2.0", "剩余磁盘低于该值则暂停（GB）"),
             ("log_keep_days", "14", "日志保留天数"),
         ]))
+
+        # ---------------- 窗口与托盘
+        win = Card()
+        win.add(SectionTitle("窗口与托盘"))
+        wg = QGridLayout()
+        wg.setHorizontalSpacing(12)
+        wg.setVerticalSpacing(8)
+        wg.setColumnStretch(0, 0)
+        wg.setColumnStretch(1, 1)
+
+        wg.addWidget(QLabel("点关闭按钮时"), 0, 0)
+        self.close_action = QComboBox()
+        self.close_action.addItem("每次询问（直接关闭 / 缩小到托盘）", "ask")
+        self.close_action.addItem("直接缩小到托盘（后台继续搬运）", "tray")
+        self.close_action.addItem("直接关闭程序", "quit")
+        wg.addWidget(self.close_action, 0, 1)
+
+        wg.addWidget(QLabel("托盘图标"), 1, 0)
+        self.enable_tray = QCheckBox("启用（关闭时可选缩小到托盘继续搬运）")
+        wg.addWidget(self.enable_tray, 1, 1)
+        win.body.addLayout(wg)
+
+        win.add(Hint(
+            "缩小到托盘后程序仍在后台监控与搬运，双击托盘图标恢复界面。\n"
+            "关掉托盘图标则「关闭」永远等于退出程序。"
+        ))
+        lay.addWidget(win)
+
+        # ---------------- 本地缓存
+        cache = Card()
+        cache.add(SectionTitle("本地缓存"))
+        cg = QGridLayout()
+        cg.setHorizontalSpacing(12)
+        cg.setVerticalSpacing(8)
+        cg.setColumnStretch(0, 0)
+        cg.setColumnStretch(1, 1)
+
+        cg.addWidget(QLabel("缓存保留天数"), 0, 0)
+        self.cache_days = NumField()
+        self.cache_days.setPlaceholderText("0～30")
+        cg.addWidget(self.cache_days, 0, 1)
+        cache.body.addLayout(cg)
+
+        self.cache_info = Hint("")
+        cache.add(self.cache_info)
+
+        crow2 = cache.row()
+        btn_clear_cache = QPushButton("🧹  一键清除本地缓存")
+        btn_clear_cache.setObjectName("Danger")
+        btn_clear_cache.clicked.connect(self._clear_cache)
+        crow2.addWidget(btn_clear_cache)
+        btn_open_cache = QPushButton("打开缓存目录")
+        btn_open_cache.setObjectName("Ghost")
+        btn_open_cache.clicked.connect(lambda: self._open(self._temp_dir()))
+        crow2.addWidget(btn_open_cache)
+        btn_refresh_cache = QPushButton("↻  刷新缓存信息")
+        btn_refresh_cache.setObjectName("Ghost")
+        btn_refresh_cache.clicked.connect(self._refresh_cache_info)
+        crow2.addWidget(btn_refresh_cache)
+        crow2.addStretch(1)
+
+        cache.add(Hint(
+            "缓存 = 下载到本机的文件副本。默认上传成功后立即删除（0 天）；\n"
+            "设为几天可以避免「上传失败要重下」和「想再传一次」时重新下载大文件。\n"
+            "上限 30 天 —— 再长意义不大，只会白占磁盘。\n"
+            "「一键清除」会删掉全部本地副本（不影响已上传到网盘的文件，"
+            "也不影响去重记录）。"
+        ))
+        lay.addWidget(cache)
 
         # ---------------- 保存
         save_row = QHBoxLayout()
@@ -215,11 +285,17 @@ class AdvancedPage(Page):
         self.recursive.setChecked(bool(m.recursive_folders))
         self.f["max_retries"].setText(str(m.max_retries))
         self.f["retry_backoff_sec"].setText(str(m.retry_backoff_sec))
-        self.f["keep_local_days"].setText(str(m.keep_local_days))
         self.f["stall_timeout_sec"].setText(str(getattr(m, "stall_timeout_sec", 20.0)))
         self.f["max_file_mb"].setText(str(m.max_file_mb))
         self.f["min_free_disk_gb"].setText(str(m.min_free_disk_gb))
         self.f["log_keep_days"].setText(str(cfg.log_keep_days))
+        # 窗口与托盘
+        ui = getattr(cfg, "ui", None)
+        idx = self.close_action.findData(getattr(ui, "close_action", "ask") or "ask")
+        if idx >= 0:
+            self.close_action.setCurrentIndex(idx)
+        self.enable_tray.setChecked(bool(getattr(ui, "enable_tray", True)))
+        self._refresh_cache_info()
 
     def _save(self) -> None:
         cfg = self.controller.config
@@ -236,6 +312,18 @@ class AdvancedPage(Page):
         m.max_file_mb = self.f["max_file_mb"].value_float(0.0)
         m.min_free_disk_gb = self.f["min_free_disk_gb"].value_float(2.0)
         cfg.log_keep_days = max(1, self.f["log_keep_days"].value_int(14, 1))
+        # 缓存天数（0~30，界面与配置都限死，避免误填 999 天白占磁盘）
+        days = self.cache_days.value_int(0, 0)
+        if days > 30:
+            days = 30
+            self.cache_days.setText("30")
+            self.toast.show("缓存保留天数上限 30 天，已按 30 保存", "warning")
+        m.keep_local_days = days
+        # 窗口与托盘
+        ui = getattr(cfg, "ui", None)
+        if ui is not None:
+            ui.close_action = self.close_action.currentData() or "ask"
+            ui.enable_tray = self.enable_tray.isChecked()
 
         try:
             problems = self.controller.save_settings()
@@ -285,6 +373,71 @@ class AdvancedPage(Page):
         self.self_check.setText(text)
 
     # ------------------------------------------------------------ 维护
+
+    # ------------------------------------------------------------ 缓存
+
+    def _cache_stats(self) -> tuple[int, int]:
+        """返回（文件数, 总字节）。"""
+        root = self._temp_dir()
+        n = 0
+        total = 0
+        try:
+            for f in root.rglob("*"):
+                if f.is_file():
+                    n += 1
+                    total += f.stat().st_size
+        except OSError:
+            pass
+        return n, total
+
+    def _refresh_cache_info(self) -> None:
+        days = self.controller.config.monitor.keep_local_days
+        n, total = self._cache_stats()
+        gb = total / (1024 ** 3)
+        size = f"{gb:.2f} GB" if gb >= 0.1 else f"{total / 1048576:.1f} MB"
+        keep = "上传成功后立即删除" if not days else f"保留 {days} 天"
+        self.cache_days.setText(str(days))
+        self.cache_info.setText(
+            f"当前缓存：{n} 个文件，共 {size}　|　策略：{keep}\n目录：{self._temp_dir()}"
+        )
+
+    def _clear_cache(self) -> None:
+        """一键清除本地缓存（下载的临时副本）。"""
+        from PySide6.QtWidgets import QMessageBox
+        from shutil import rmtree
+
+        n, total = self._cache_stats()
+        if n == 0:
+            self.toast.show("缓存已经是空的", "info")
+            return
+        mb = total / 1048576
+        size = f"{mb / 1024:.2f} GB" if mb >= 1024 else f"{mb:.1f} MB"
+        if QMessageBox.question(
+            self, "清除本地缓存",
+            f"将删除 {n} 个本地文件副本，共 {size}。\n\n"
+            "· 已上传到网盘的文件**不受影响**\n"
+            "· 去重记录**不受影响**（不会重复上传）\n"
+            "· 只是以后「想再传一次」时需要重新下载\n\n确定清除吗？",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+
+        root = self._temp_dir()
+        removed = 0
+        try:
+            for child in root.iterdir():
+                try:
+                    if child.is_dir():
+                        rmtree(child, ignore_errors=True)
+                    else:
+                        child.unlink(missing_ok=True)
+                    removed += 1
+                except OSError:
+                    continue
+        except OSError as exc:
+            self.toast.show(f"清除失败：{exc}", "error")
+            return
+        self._refresh_cache_info()
+        self.toast.show(f"已清除本地缓存（{removed} 项，释放 {size}）", "success")
 
     def _requeue(self) -> None:
         try:

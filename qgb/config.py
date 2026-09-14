@@ -147,7 +147,10 @@ class MonitorConfig:
     max_retries: int = 3
     #: 重试退避基数（秒），按 attempts 递增
     retry_backoff_sec: int = 30
-    #: 本地保留天数；0 = 上传成功后立即删除
+    #: 本地副本保留天数（缓存）：
+    #:  0 = 上传成功后立即删除（默认）
+    #:  >0 = 保留这么多天，便于"想再传一次"时不用重新下载
+    #:  上限 30 天（再长意义不大，反而白占磁盘；界面也会限制在 0~30）
     keep_local_days: int = 0
     #: 单文件体积上限（MB），0 表示不限
     max_file_mb: float = 0.0
@@ -188,6 +191,14 @@ class UIConfig:
 
     #: 预留：将来若要恢复主题切换，把 dark/light 放这里
     theme: str = "dark"
+
+    #: 点关闭按钮时的行为：
+    #:   ``ask``  = 每次弹窗询问（默认）
+    #:   ``tray`` = 直接缩小到托盘
+    #:   ``quit`` = 直接退出程序
+    close_action: str = "ask"
+    #: 是否启用托盘图标（关掉则关闭=退出，行为回到最朴素的样子）
+    enable_tray: bool = True
 
 
 @dataclass

@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import blur, glass, themes
+from .tray import TrayController, app_icon
 from .widgets import LogView, StatusBadge, ToastHost
 
 log = logging.getLogger(__name__)
@@ -107,6 +108,8 @@ class Shell(QMainWindow):
     def __init__(self, controller) -> None:
         super().__init__()
         self.controller = controller
+        #: 置位后 closeEvent 直接放行（托盘"退出程序"用），不再弹窗
+        self.force_close = False
 
         self.capability = glass.detect()      # 只用于能力提示，实际模糊走 blur.py
         self.toast = ToastHost(self)
@@ -164,6 +167,20 @@ class Shell(QMainWindow):
             # 只有无边框窗口才需要自己实现拖动与边缘缩放；
             # 系统边框模式下安装它反而会抢事件（容易出怪现象）。
             self._install_drag_and_resize()
+
+        # 窗口图标（任务栏/Alt+Tab/标题栏）
+        try:
+            self.setWindowIcon(app_icon())
+        except Exception:  # noqa: BLE001
+            log.debug("设置窗口图标失败", exc_info=True)
+
+        # 系统托盘 + 关闭行为（缩小到托盘 / 直接退出 / 每次询问）
+        try:
+            ui = getattr(getattr(controller, "config", None), "ui", None)
+            self.tray = TrayController(self) if getattr(ui, "enable_tray", True) else None
+        except Exception:  # noqa: BLE001
+            log.debug("初始化托盘失败", exc_info=True)
+            self.tray = None
 
         self._apply_style()                          # 单主题，只设一次 QSS
         QTimer.singleShot(0, self._apply_glass)     # 等窗口有 HWND 后再上模糊
@@ -462,6 +479,15 @@ class Shell(QMainWindow):
                         log.debug("页面启动钩子失败", exc_info=True)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        """关闭窗口：按设置弹窗询问 / 缩小到托盘 / 直接退出。"""
+        tray = getattr(self, "tray", None)
+        if tray is not None and not getattr(self, "force_close", False):
+            try:
+                if not tray.handle_close():
+                    event.ignore()          # 用户选择回托盘或取消
+                    return
+            except Exception:  # noqa: BLE001
+                log.debug("关闭决策失败，按直接退出处理", exc_info=True)
         try:
             self.bridge.stop()
         except Exception:  # noqa: BLE001

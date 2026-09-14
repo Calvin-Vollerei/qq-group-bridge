@@ -38,6 +38,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     app = QApplication(argv)
+    # 应用级图标：任务栏、Alt+Tab 都取这里
+    try:
+        from .tray import app_icon
+
+        app.setWindowIcon(app_icon())
+    except Exception:  # noqa: BLE001
+        pass
     app.setApplicationName("QQ群文件搬运工")
     app.setOrganizationName("qgb")
 
