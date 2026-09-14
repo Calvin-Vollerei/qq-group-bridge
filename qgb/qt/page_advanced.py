@@ -1,7 +1,10 @@
-"""高级页：窗口模糊模式、主题、以及搬运/清理等维护操作。
+"""高级页：外观信息（只读）+ 维护操作。
 
-用户要求：**高级里加一个切模式** —— 即窗口模糊模式的选择
-（亚克力 / 老式模糊 / 无模糊），切换后立即生效并写回配置。
+按用户要求**取消**了主题切换与模糊模式选择：
+* 主题固定为单套深色（对比度调优）；
+* 模糊固定为 **aero（BLURBEHIND）**，且性能优先。
+
+这里只**展示**当前外观状态（便于排障），不再提供切换控件。
 """
 
 from __future__ import annotations
@@ -9,17 +12,14 @@ from __future__ import annotations
 import logging
 
 from PySide6.QtWidgets import (
-    QComboBox,
-    QGridLayout,
     QHBoxLayout,
-    QLabel,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
-from . import blur, themes
+from . import blur
 from .shell import Page
 from .widgets import Card, Hint, SectionTitle, StatusBadge
 
@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 
 
 class AdvancedPage(Page):
-    """高级：外观（模糊模式 / 主题）+ 维护操作。"""
+    """高级：外观状态 + 维护操作。"""
 
     title = "高级"
 
@@ -46,7 +46,7 @@ class AdvancedPage(Page):
         lay.setContentsMargins(14, 14, 14, 14)
         lay.setSpacing(12)
 
-        # ---------------- 外观：模糊模式
+        # ---------------- 外观（只读）
         look = Card()
         head = look.row()
         head.addWidget(SectionTitle("窗口外观"))
@@ -54,35 +54,17 @@ class AdvancedPage(Page):
         self.glass_badge = StatusBadge("—")
         head.addWidget(self.glass_badge)
 
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(14)
-        grid.setVerticalSpacing(10)
-
-        grid.addWidget(QLabel("模糊模式"), 0, 0)
-        self.glass_box = QComboBox()
-        for key, (label, _fn) in blur.STYLES.items():
-            self.glass_box.addItem(label, key)
-        self.glass_box.currentIndexChanged.connect(self._on_glass_changed)
-        grid.addWidget(self.glass_box, 0, 1)
-
-        grid.addWidget(QLabel("主题"), 1, 0)
-        self.theme_box = QComboBox()
-        for key, palette in themes.THEMES.items():
-            self.theme_box.addItem(palette.name, key)
-        self.theme_box.currentIndexChanged.connect(self._on_theme_changed)
-        grid.addWidget(self.theme_box, 1, 1)
-        look.body.addLayout(grid)
-
+        self.look_info = Hint("")
+        look.add(self.look_info)
         look.add(Hint(
-            "模糊模式说明：\n"
-            "· 亚克力模糊 —— AccentState=4，清透，推荐\n"
-            "· 老式模糊 —— AccentState=3，偏灰一些\n"
-            "· 无模糊 —— 只保留半透明（旧系统或不想吃 GPU 时选它）\n"
-            "切换后立即生效；若系统不支持模糊，会自动降级为半透明。"
+            "外观按「性能优先」固定：\n"
+            "· 模糊 —— aero（AccentState=3，系统原生，开销低）\n"
+            "· 主题 —— 单套深色（按对比度调优，无切换开销）\n"
+            "换肤/切换会重建整套样式表，对毛玻璃窗口有明显卡顿，因此已取消。"
         ))
         lay.addWidget(look)
 
-        # ---------------- 维护操作
+        # ---------------- 维护
         maint = Card()
         maint.add(SectionTitle("维护"))
         row = maint.row()
@@ -113,7 +95,7 @@ class AdvancedPage(Page):
         except Exception:  # noqa: BLE001
             about.add(Hint("QQ群文件搬运工"))
         about.add(Hint(
-            "界面：PySide6（Qt 6）+ 原生窗口模糊\n"
+            "界面：PySide6（Qt 6）+ 原生窗口模糊（aero）\n"
             "旧版 Tk 界面仍可用：run_bridge.py --ui tk"
         ))
         lay.addWidget(about)
@@ -123,43 +105,15 @@ class AdvancedPage(Page):
         return area
 
     def on_start(self) -> None:
-        self._sync_from_config()
-
-    def _sync_from_config(self) -> None:
-        """把当前实际状态回填到控件（避免显示与实际不一致）。"""
         shell = self.shell
-        try:
-            style = getattr(shell, "glass_style", blur.DEFAULT_STYLE)
-            idx = self.glass_box.findData(style)
-            if idx >= 0:
-                self.glass_box.blockSignals(True)
-                self.glass_box.setCurrentIndex(idx)
-                self.glass_box.blockSignals(False)
-            self.glass_badge.set_state(
-                "ok" if style != "none" else "idle",
-                dict(((k, v[0]) for k, v in blur.STYLES.items())).get(style, style),
-            )
-            tidx = self.theme_box.findData(getattr(shell, "theme_key", "dark"))
-            if tidx >= 0:
-                self.theme_box.blockSignals(True)
-                self.theme_box.setCurrentIndex(tidx)
-                self.theme_box.blockSignals(False)
-        except Exception:  # noqa: BLE001
-            log.debug("回填外观设置失败", exc_info=True)
+        style = getattr(shell, "glass_style", blur.DEFAULT_STYLE)
+        label = blur.STYLES.get(style, ("模糊", None))[0]
+        self.glass_badge.set_state("ok" if style != "none" else "idle", label)
+        self.look_info.setText(
+            f"模糊模式：{label}　|　主题：单套深色　|　渲染：Qt 6 (PySide6)"
+        )
 
     # -------------------------------------------------- 动作
-
-    def _on_glass_changed(self, _index: int) -> None:
-        key = self.glass_box.currentData()
-        ok = self.shell.set_glass_style(key)
-        label = dict(((k, v[0]) for k, v in blur.STYLES.items())).get(key, key)
-        self.glass_badge.set_state("ok" if ok and key != "none" else "idle", label)
-        self.toast.show(f"模糊模式已切换为「{label}」", "success" if ok else "warning")
-
-    def _on_theme_changed(self, _index: int) -> None:
-        key = self.theme_box.currentData()
-        self.shell.apply_theme(key)
-        self.toast.show(f"主题已切换为「{themes.get(key).name}」", "info")
 
     def _requeue(self) -> None:
         try:

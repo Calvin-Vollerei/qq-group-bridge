@@ -109,13 +109,17 @@ def clear(hwnd: int) -> None:
     _change_accent(hwnd, ATTR_BACKDROP, 0)
 
 
-#: 可选样式（按"效果强度/观感"排序，供界面下拉选择）
+#: 默认使用 **aero（BLURBEHIND）** —— 用户实测指定默认这一档。
+#:
+#: 早期版本默认 acrylic，但用户反馈 aero 更合适，这里按用户要求改默认值。
+DEFAULT_STYLE = "aero"
+
+#: 可选样式（默认 aero；保留 acrylic / none 以便排障时切换）
 STYLES: dict[str, tuple[str, object]] = {
-    "acrylic": ("亚克力（清透模糊）", apply_acrylic),
-    "blur": ("老式模糊（偏灰）", apply_blur),
+    "aero": ("Aero 模糊（默认）", apply_blur),
+    "acrylic": ("亚克力模糊", apply_acrylic),
     "none": ("无模糊（仅半透明）", clear),
 }
-DEFAULT_STYLE = "acrylic"
 
 
 def apply_style(hwnd: int, style: str) -> bool:

@@ -38,9 +38,25 @@ class Card(QFrame):
         return widget
 
     def row(self, spacing: int = 8) -> QHBoxLayout:
-        box = QHBoxLayout()
-        box.setSpacing(spacing)
-        self.body.addLayout(box)
+        """返回卡片的**横向行**（同一张卡复用同一行）。
+
+        踩过的坑：早期每次调用都新建一个 QHBoxLayout 并 addLayout 到卡片上，
+        而卡片往往会被调用两次（一次放标题、一次放按钮）——
+        嵌套布局换来换去会触发 Qt 的
+        ``QLayout::addChildLayout: layout ... already has a parent`` 警告。
+        复用同一行即可：卡片本来就只需要一行。
+        """
+        box = getattr(self, "_row", None)
+        if box is None:
+            # ⚠️ 这里**不能**写 QHBoxLayout(self) —— 卡片已经有一个布局
+            #    （self.body），再给同一个控件装第二个布局，Qt 会报
+            #    "Attempting to add QLayout to Card, which already has a layout"。
+            #    正确做法：无父创建，由 addLayout 把它挂到 body 下。
+            #    （两处警告都是用 qInstallMessageHandler 打调用栈定位到的。）
+            box = QHBoxLayout()
+            box.setSpacing(spacing)
+            self.body.addLayout(box)
+            self._row = box
         return box
 
 

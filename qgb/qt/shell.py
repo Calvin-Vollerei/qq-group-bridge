@@ -20,6 +20,7 @@ from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QApplication,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -98,27 +99,20 @@ class Page(QWidget):
     def on_event(self, event) -> None:  # noqa: BLE001
         """收到控制器事件（默认忽略）。"""
 
-    def on_theme_changed(self, palette: themes.Palette) -> None:
-        """主题变化时的额外处理（默认无需处理，QSS 已覆盖大部分）。"""
 
 
 class Shell(QMainWindow):
     """毛玻璃主窗口。"""
 
-    def __init__(self, controller, *, theme: str | None = None) -> None:
+    def __init__(self, controller) -> None:
         super().__init__()
         self.controller = controller
-        self.theme_key = theme or getattr(
-            getattr(getattr(controller, "config", None), "ui", None), "theme", None
-        ) or themes.DEFAULT_THEME
 
         self.capability = glass.detect()      # 只用于能力提示，实际模糊走 blur.py
         self.toast = ToastHost(self)
 
-        # 模糊模式：优先读配置（「高级」页可改），默认亚克力
-        ui = getattr(getattr(controller, "config", None), "ui", None)
-        style = getattr(ui, "glass_style", None) or blur.DEFAULT_STYLE
-        self.glass_style = style if style in blur.STYLES else blur.DEFAULT_STYLE
+        # 模糊模式固定为 aero（用户要求默认 aero，并去掉模式选择器）
+        self.glass_style = blur.DEFAULT_STYLE
 
         self.setWindowTitle("QQ群文件搬运工")
         self.setMinimumSize(880, 560)
@@ -150,8 +144,8 @@ class Shell(QMainWindow):
             # 系统边框模式下安装它反而会抢事件（容易出怪现象）。
             self._install_drag_and_resize()
 
-        self.apply_theme(self.theme_key)
-        QTimer.singleShot(0, self._apply_glass)     # 等窗口有 HWND 后再上材质
+        self._apply_style()                          # 单主题，只设一次 QSS
+        QTimer.singleShot(0, self._apply_glass)     # 等窗口有 HWND 后再上模糊
 
     # ------------------------------------------------------------ 构建
 
@@ -174,9 +168,19 @@ class Shell(QMainWindow):
         outer.setSpacing(8)
 
 
-        # ---- 标题栏（自绘）
-        bar = QHBoxLayout()
+        # ---- 顶层条
+        #
+        # ⚠️ 这里是"标题栏死黑/死白"的修复点：早期版本在无边框窗口上让顶层条
+        #    直接画在窗口背景上 —— 背景透明时透出黑底就是"死黑"，
+        #    切到日间主题又变成"死白"。现在给它一个**自己的半透明底**
+        #    （objectName=TopBar），颜色跟随主题，不再受窗口背景影响。
+        top_bar = QFrame()
+        top_bar.setObjectName("TopBar")
+        bar = QHBoxLayout(top_bar)      # 父级写在构造里（见 Card.row 的说明）
+        bar.setContentsMargins(12, 8, 12, 8)
         bar.setSpacing(8)
+        outer.addWidget(top_bar)
+
         self.title_label = QLabel("QQ群文件搬运工")
         self.title_label.setObjectName("Title")
         bar.addWidget(self.title_label)
@@ -187,11 +191,9 @@ class Shell(QMainWindow):
         bar.addWidget(self.state_badge)
         bar.addStretch(1)
 
-        self.btn_theme = QPushButton("主题")
-        self.btn_theme.setObjectName("Ghost")
-        self.btn_theme.setToolTip("切换夜间 / 日间主题")
-        self.btn_theme.clicked.connect(self.toggle_theme)
-        bar.addWidget(self.btn_theme)
+        # 主题切换按钮已移除（用户要求"主题不要了"，只保留单套深色）
+        self.style_badge = StatusBadge("深色")
+        bar.addWidget(self.style_badge)
 
         # 自绘窗口按钮只在无边框模式下需要；系统边框自带最小化/最大化/关闭，
         # 再放一套既重复、又容易和拖动逻辑抢事件（实测"点一下就隐藏"多半源于此）。
@@ -207,7 +209,10 @@ class Shell(QMainWindow):
             self.btn_close.setFixedWidth(38)
             self.btn_close.clicked.connect(self.close)
             bar.addWidget(self.btn_close)
-        outer.addLayout(bar)
+        # 注意：top_bar 已经用 outer.addWidget() 加进去了，
+        # 这里**不能**再 outer.addLayout(bar) —— 那是重复挂载同一个布局，
+        # Qt 会报 "QLayout::addChildLayout: layout ... already has a parent"
+        # （用 qInstallMessageHandler 打调用栈定位到的）。
 
         # ---- 标签页
         self.tabs = QTabWidget()
@@ -242,6 +247,7 @@ class Shell(QMainWindow):
             self.tabs.addTab(page, page.title)
 
         # ---- 底部状态条
+        # root 已有 outer 布局，这里必须无父创建（否则报 already has a layout）
         foot = QHBoxLayout()
         foot.setSpacing(10)
         self.footer = QLabel("")
@@ -275,67 +281,36 @@ class Shell(QMainWindow):
         hwnd = int(self.winId())
         style = self.glass_style
         ok = blur.apply_style(hwnd, style)
-        names = {"acrylic": "亚克力模糊", "blur": "老式模糊", "none": "无模糊"}
-        label = names.get(style, style)
+        label = blur.STYLES.get(style, ("模糊", None))[0]
         if style == "none":
-            self.glass_badge.set_state("idle", label)
-            self.glass_badge.setToolTip("已关闭窗口模糊（仍为半透明），可在「高级」页切换")
+            self.glass_badge.set_state("idle", "无模糊")
         elif ok:
-            self.glass_badge.set_state("ok", label)
+            self.glass_badge.set_state("ok", "Aero 模糊")
             self.glass_badge.setToolTip(
-                f"{label} — AccentState={'4' if style == 'acrylic' else '3'}\n"
-                "可在「高级」页切换模糊模式"
+                f"{label}　AccentState={blur.ACCENT_ENABLE_BLURBEHIND}"
             )
         else:
             self.glass_badge.set_state("warn", "模糊不可用")
-            self.glass_badge.setToolTip("本系统不支持窗口模糊，界面已自动降级为半透明")
+            self.glass_badge.setToolTip("本系统不支持窗口模糊，已自动降级为半透明")
 
     def set_glass_style(self, style: str) -> bool:
-        """切换模糊模式（「高级」页调用）。返回是否成功。"""
+        """切换模糊模式（保留入口用于排障；界面上已无切换器）。
+
+        默认 aero；同一次进程内切换只调用一次系统 API，开销可忽略。
+        """
         self.glass_style = style if style in blur.STYLES else blur.DEFAULT_STYLE
         self._apply_glass()
-        try:
-            ui = getattr(self.controller.config, "ui", None)
-            if ui is not None and hasattr(ui, "glass_style"):
-                ui.glass_style = self.glass_style
-        except Exception:  # noqa: BLE001
-            pass
         return True
 
-    def apply_theme(self, key: str) -> None:
-        self.theme_key = key if key in themes.THEMES else themes.DEFAULT_THEME
-        palette = themes.get(self.theme_key)
+    def _apply_style(self) -> None:
+        """设置全局样式（单主题，只在初始化时调用一次）。
 
-        # 自绘路线要做圆角底；原生材质时让窗口背景全透明，交给系统画
-        # 只有自绘路线才给 Root 画圆角半透明底；原生路线把背景交给系统材质
-        self.setStyleSheet(
-            themes.build_qss(palette, frameless=self.frameless)
-        )
-        self.btn_theme.setText(f"主题：{palette.name}")
-
-        for page in getattr(self, "pages", []):
-            try:
-                page.on_theme_changed(palette)
-            except Exception:  # noqa: BLE001
-                log.debug("页面主题回调失败", exc_info=True)
-
-        # 原生材质要跟着明暗走
-        try:
-            glass.apply(int(self.winId()), self.capability, dark=palette.is_dark)
-        except Exception:  # noqa: BLE001
-            pass
-
-        # 持久化（配置里没有 ui 段就跳过，不强行改结构）
-        try:
-            ui = getattr(self.controller.config, "ui", None)
-            if ui is not None and hasattr(ui, "theme"):
-                ui.theme = self.theme_key
-        except Exception:  # noqa: BLE001
-            pass
-
-    def toggle_theme(self) -> None:
-        self.apply_theme(themes.flipped(self.theme_key))
-        self.toast.show(f"已切换到{themes.get(self.theme_key).name}主题", "info")
+        不再有"切换主题"路径 —— 每次切换都要重建整套 QSS，
+        对毛玻璃窗口来说有明显卡顿，而用户已明确不要主题切换。
+        """
+        self.setStyleSheet(themes.build_qss())
+        self.style_badge.setText("深色")
+        self.style_badge.setToolTip("单套深色主题（按对比度调优，已取消切换）")
 
     def _toggle_max(self) -> None:
         """保留入口（无边框模式的历史用法）；系统边框模式下由系统处理。"""

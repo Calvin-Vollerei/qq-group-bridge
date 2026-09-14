@@ -177,19 +177,17 @@ class MonitorConfig:
 
 @dataclass
 class UIConfig:
-    """界面外观（仅影响 PySide6 新界面；旧 Tk 界面忽略这些字段）。"""
+    """界面外观。
 
-    #: 主题：dark / light
+    ⚠️ 已按用户要求**取消主题切换与模糊模式选择**：
+    * 只保留一套深色配色（见 ``qgb/qt/themes.py``），避免日间主题对比度差；
+    * 模糊固定用 **aero（BLURBEHIND）**，由 ``blur.DEFAULT_STYLE`` 决定。
+
+    字段保留是为了兼容旧配置文件（多了也能读，缺了有默认值）。
+    """
+
+    #: 预留：将来若要恢复主题切换，把 dark/light 放这里
     theme: str = "dark"
-    #: 窗口模糊模式：
-    #:
-    #: * ``acrylic`` —— AccentState=4（ACRYLICBLURBEHIND），清透模糊
-    #: * ``blur``    —— AccentState=3（BLURBEHIND），老式模糊，偏灰
-    #: * ``none``    —— 不做模糊，仅半透明
-    #:
-    #: 这两套调用序列抄自 pywinstyles 里**实测生效**的实现
-    #: （属性 30 + 属性 19 连续两次调用），见 qgb/qt/blur.py。
-    glass_style: str = "acrylic"
 
 
 @dataclass
