@@ -130,7 +130,12 @@ a = Analysis(  # noqa: F821
     ["run_bridge.py"],
     pathex=[str(ROOT)],
     binaries=[],
-    datas=[],
+    # 应用图标：必须显式打进去，否则打包后 qgb/assets 不存在，
+    # 窗口/托盘图标就是空的（实测踩到：用户问"图标到哪去了"）。
+    datas=[
+        ("qgb/assets/icon.ico", "qgb/assets"),
+        ("qgb/assets/icon.png", "qgb/assets"),
+    ],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -158,7 +163,8 @@ exe = EXE(  # noqa: F821
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    # exe 自身的图标（资源管理器/任务栏/开始菜单看到的就是它）
+    icon="qgb/assets/icon.ico",
 )
 
 coll = COLLECT(  # noqa: F821

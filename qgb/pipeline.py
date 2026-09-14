@@ -387,6 +387,11 @@ class Pipeline:
         for gf in files:
             if self._stop.is_set():
                 return
+            # 永久排除：直接跳过，不登记、不下载、不重试（省流量）。
+            # 必须在这里显式查名单 —— is_settled() 依赖 transfers 里已有行，
+            # 而 mark() 不建行，所以从没记录过的被排除文件光靠 SKIPPED 拦不住。
+            if self.store.is_excluded(gf.key):
+                continue
             self.store.upsert_file(gf)
 
             decision = self.filters.check(gf.name, gf.size)

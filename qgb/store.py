@@ -554,6 +554,64 @@ class StateStore:
             row = cur.fetchone()
             return row["value"] if row else default
 
+    # -------------------------------------------------- 永久排除
+
+    #: kv 里存永久排除名单的键（每行一个 "群号\x1fbusid\x1ffile_id"）
+    _KV_EXCLUDED = "excluded_permanent"
+
+    def excluded_keys(self) -> set[tuple[str, int, str]]:
+        """读取永久排除名单。"""
+        raw = self.get_kv(self._KV_EXCLUDED, "") or ""
+        out: set[tuple[str, int, str]] = set()
+        for line in raw.splitlines():
+            parts = line.split("\x1f")
+            if len(parts) == 3:
+                try:
+                    out.add((parts[0], int(parts[1]), parts[2]))
+                except ValueError:
+                    continue
+        return out
+
+    def is_excluded(self, key: tuple[str, int, str]) -> bool:
+        return key in self.excluded_keys()
+
+    def exclude(self, keys: list[tuple[str, int, str]], *, reason: str = "永久排除") -> int:
+        """把文件加入永久排除名单（并标成 SKIPPED 让它不再被扫描纳入）。
+
+        为什么要永久排除：有些文件永远搬不上去（例如 QQ 侧取不到直链的 -134、
+        超大文件被上游拒收）。如果只是普通失败，它会永远留在队列里反复重试、
+        反复下载，白耗流量。永久排除后它既不出现在待处理里，也不会再被重新发现。
+        """
+        current = self.excluded_keys()
+        added = 0
+        for k in keys:
+            if k in current:
+                continue
+            current.add(k)
+            added += 1
+            # SKIPPED 属于 is_settled()，扫描时会被跳过（与"已处理完结"同义）
+            self.mark(k, TransferState.SKIPPED, error=reason)
+        if added:
+            self.set_kv(self._KV_EXCLUDED,
+                        "\n".join(f"{g}\x1f{b}\x1f{f}" for g, b, f in sorted(current)))
+        return added
+
+    def unexclude(self, keys: list[tuple[str, int, str]] | None = None) -> int:
+        """解除永久排除；不传 keys 表示全部解除。返回解除数量。"""
+        current = self.excluded_keys()
+        if keys is None:
+            removed = len(current)
+            self.set_kv(self._KV_EXCLUDED, "")
+            return removed
+        removed = 0
+        for k in keys:
+            if k in current:
+                current.discard(k)
+                removed += 1
+        self.set_kv(self._KV_EXCLUDED,
+                    "\n".join(f"{g}\x1f{b}\x1f{f}" for g, b, f in sorted(current)))
+        return removed
+
     # -------------------------------------------------- 事件流水
 
     def add_event(self, level: str, message: str, *, group_id: str = "", name: str = "") -> None:

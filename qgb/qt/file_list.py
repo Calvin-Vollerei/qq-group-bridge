@@ -96,6 +96,22 @@ class FileListDialog(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
 
+        # 透明毛玻璃：与主窗口用同一套原生模糊（blur.py 的 aero 序列）。
+        # 用标准窗口 + 透明背景，Windows 会把材质合成到客户区，
+        # 同时保留 Aero Snap 能力（不能用 FramelessWindowHint，见 tray/shell 的注释）。
+        from . import blur
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        try:
+            blur.apply_style(int(self.winId()), blur.DEFAULT_STYLE)
+        except Exception:  # noqa: BLE001
+            log.debug("文件列表窗口应用模糊失败", exc_info=True)
+        self.setStyleSheet(
+            "QWidget { background: transparent; }"
+            "QTreeWidget, QListWidget, QAbstractItemView { "
+            "background: rgba(20, 23, 30, 0.55); }"
+        )
+
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 12)
         lay.setSpacing(8)
@@ -178,10 +194,15 @@ class FileListDialog(QWidget):
             ("取消置顶", self._unpin, "ghost"),
             ("↑ 上移", lambda: self._move(-1), "ghost"),
             ("↓ 下移", lambda: self._move(+1), "ghost"),
+            ("⛔ 永久排除选中", self._exclude, "danger"),
+            ("永久排除全部筛选结果", self._exclude_filtered, "ghost"),
+            ("管理永久排除…", self._manage_excluded, "ghost"),
         ):
             btn = QPushButton(text)
             if style == "primary":
                 btn.setObjectName("Primary")
+            elif style == "danger":
+                btn.setObjectName("Danger")
             btn.clicked.connect(slot)
             bottom.addWidget(btn)
         lay.addLayout(bottom)
@@ -325,6 +346,76 @@ class FileListDialog(QWidget):
         else:
             self.page.toast.show(f"{label}：{changed} 项", "success")
         self.refresh()
+
+    # ------------------------------------------------------------ 永久排除
+
+    def _exclude(self) -> None:
+        """把选中的文件永久排除（不再出现在列表、不再重试、不再耗流量）。"""
+        keys = self._selected_keys()
+        if not keys:
+            self.page.toast.show("请先选中要排除的文件", "warning")
+            return
+        from PySide6.QtWidgets import QMessageBox
+
+        if QMessageBox.question(
+            self, "永久排除",
+            f"将把选中的 {len(keys)} 个文件**永久排除**：\n\n"
+            "· 不再出现在文件列表里\n"
+            "· 不再重试、不再下载（省流量）\n"
+            "· 以后重新扫描也不会再纳入\n\n"
+            "适合那些永远搬不上去的文件（已被删除、取不到直链、上游拒收等）。\n"
+            "随时可以在「管理永久排除…」里恢复。\n\n确定排除吗？",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        n = self.controller.store.exclude(list(keys))
+        self.page.toast.show(f"已永久排除 {n} 个文件", "success")
+        self.refresh()
+
+    def _exclude_filtered(self) -> None:
+        """把当前筛选结果里的**失败/过期**项一键永久排除。"""
+        keys = []
+        for i in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(i)
+            if item.text(5) not in ("失败", "已过期"):
+                continue
+            raw = item.data(0, Qt.ItemDataRole.UserRole)
+            if raw:
+                g, b, f = str(raw).split("\x1f")
+                keys.append((g, int(b), f))
+        if not keys:
+            self.page.toast.show("当前筛选结果里没有「失败/已过期」的文件", "info")
+            return
+        from PySide6.QtWidgets import QMessageBox
+
+        if QMessageBox.question(
+            self, "永久排除",
+            f"将把当前筛选结果里的 {len(keys)} 个「失败/已过期」文件永久排除，"
+            "以后不再重试、不再下载。\n\n确定吗？",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        n = self.controller.store.exclude(keys)
+        self.page.toast.show(f"已永久排除 {n} 个文件", "success")
+        self.refresh()
+
+    def _manage_excluded(self) -> None:
+        """查看 / 恢复永久排除名单。"""
+        from PySide6.QtWidgets import QMessageBox
+
+        keys = sorted(self.controller.store.excluded_keys())
+        if not keys:
+            self.page.toast.show("永久排除名单是空的", "info")
+            return
+        lines = "\n".join(f"  {g} / {f}" for g, _b, f in keys[:30])
+        more = f"\n  …还有 {len(keys) - 30} 个" if len(keys) > 30 else ""
+        if QMessageBox.question(
+            self, "永久排除名单",
+            f"当前有 {len(keys)} 个文件被永久排除：\n\n{lines}{more}\n\n"
+            "点「Yes」全部恢复（它们会重新进入待处理队列）；\n"
+            "点「No」保持不变。",
+        ) == QMessageBox.StandardButton.Yes:
+            n = self.controller.store.unexclude(None)
+            self.page.toast.show(f"已恢复 {n} 个文件到队列", "success")
+            self.refresh()
 
     def _pin(self) -> None:
         self._act(lambda k: self.controller.queue_pin(k, True), "已置顶")

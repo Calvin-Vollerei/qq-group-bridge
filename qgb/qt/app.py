@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
         app.setWindowIcon(app_icon())
     except Exception:  # noqa: BLE001
         pass
-    app.setApplicationName("QQ群文件搬运工")
+    app.setApplicationName("自动化群文件云转存软件（个人版）")
     app.setOrganizationName("qgb")
 
     # 统一字体：Windows 上用微软雅黑，缺失时回退默认

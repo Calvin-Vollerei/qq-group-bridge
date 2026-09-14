@@ -117,7 +117,7 @@ class Shell(QMainWindow):
         # 模糊模式固定为 aero（用户要求默认 aero，并去掉模式选择器）
         self.glass_style = blur.DEFAULT_STYLE
 
-        self.setWindowTitle("QQ群文件搬运工")
+        self.setWindowTitle("自动化群文件云转存软件（个人版）")
         # 默认尺寸按屏幕比例给足（用户反馈"默认窗口太小"）：
         # 宽取屏幕 74%、高取 78%，并夹在合理区间内；小屏也不会超出工作区。
         self.setMinimumSize(900, 600)
