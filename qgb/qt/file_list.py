@@ -54,6 +54,9 @@ class FileListDialog(QDialog):
         self.controller = page.controller
         self.setWindowTitle("文件列表与下载顺序")
         self.resize(1180, 720)
+        # 非模态 + 独立窗口：用户要求"打开列表后仍能操作主页面"
+        self.setModal(False)
+        self.setWindowFlag(Qt.WindowType.Window, True)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 12)

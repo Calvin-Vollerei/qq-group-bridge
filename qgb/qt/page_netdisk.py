@@ -61,6 +61,9 @@ class NetdiskPage(Page):
         g = QGridLayout()
         g.setHorizontalSpacing(12)
         g.setVerticalSpacing(8)
+        # 宽度自适应：标签列固定，输入列拉伸填满窗口
+        g.setColumnStretch(0, 0)
+        g.setColumnStretch(1, 1)
 
         g.addWidget(QLabel("上传方式"), 0, 0)
         self.adapter = QComboBox()
@@ -70,6 +73,7 @@ class NetdiskPage(Page):
 
         g.addWidget(QLabel("WebDAV 地址"), 1, 0)
         self.url = QLineEdit()
+        self.url.setMinimumWidth(240)
         self.url.setPlaceholderText("http://127.0.0.1:5244/dav")
         g.addWidget(self.url, 1, 1)
 

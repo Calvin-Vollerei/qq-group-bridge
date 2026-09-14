@@ -117,6 +117,8 @@ class GroupsPage(Page):
         g = QGridLayout()
         g.setHorizontalSpacing(12)
         g.setVerticalSpacing(8)
+        g.setColumnStretch(0, 0)
+        g.setColumnStretch(1, 1)
         g.addWidget(QLabel("包含（命中任意一条即通过）"), 0, 0)
         self.include = QPlainTextEdit()
         self.include.setPlaceholderText(r".*\.(pdf|xlsx)$")

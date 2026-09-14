@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
@@ -160,10 +161,35 @@ class MonitorPage(Page):
         lay.addWidget(prog)
 
         logcard = Card()
-        logcard.add(SectionTitle("运行日志"))
+        lhead = logcard.row()
+        lhead.addWidget(SectionTitle("运行日志"))
+        lhead.addStretch(1)
+        self.log_level = Hint("")
+        lhead.addWidget(self.log_level)
+
         self.log = LogView()
         self.log.setMinimumHeight(200)
         logcard.add(self.log, 1)
+
+        # 日志工具条（对齐旧 Tk 版：清空 / 导出；另加"打开日志文件/目录"便于排障）
+        lrow = logcard.row()
+        btn_clear_log = QPushButton("清空")
+        btn_clear_log.setObjectName("Ghost")
+        btn_clear_log.clicked.connect(self.log.clear_log)
+        lrow.addWidget(btn_clear_log)
+        btn_export = QPushButton("导出日志")
+        btn_export.setObjectName("Ghost")
+        btn_export.clicked.connect(self._export_log)
+        lrow.addWidget(btn_export)
+        btn_open_log = QPushButton("打开日志文件")
+        btn_open_log.setObjectName("Ghost")
+        btn_open_log.clicked.connect(lambda: self._open_path(self._log_file()))
+        lrow.addWidget(btn_open_log)
+        btn_open_dir = QPushButton("打开日志目录")
+        btn_open_dir.setObjectName("Ghost")
+        btn_open_dir.clicked.connect(lambda: self._open_path(self._log_dir()))
+        lrow.addWidget(btn_open_dir)
+        lrow.addStretch(1)
         lay.addWidget(logcard, 1)
 
         lay.addStretch(0)
@@ -212,12 +238,61 @@ class MonitorPage(Page):
         except Exception as exc:  # noqa: BLE001
             self.toast.show(f"刷新失败：{type(exc).__name__}", "error")
 
+    def _log_dir(self):
+        from ..paths import default_data_dir
+
+        return default_data_dir() / "logs"
+
+    def _log_file(self):
+        """日志文件路径（logging_setup 里固定的名字是 qgb.log）。"""
+        return self._log_dir() / "qgb.log"
+
+    def _open_path(self, path) -> None:
+        import os
+        import subprocess
+        import sys
+
+        try:
+            target = str(path)
+            if sys.platform == "win32":
+                os.startfile(target)  # noqa: S606
+            else:
+                subprocess.Popen(["xdg-open", target])  # noqa: S603,S607
+        except Exception as exc:  # noqa: BLE001
+            self.toast.show(f"打开失败：{type(exc).__name__}", "error")
+
+    def _export_log(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出运行日志", "qgb-log.txt", "文本文件 (*.txt)")
+        if not path:
+            return
+        if self.log.export(path):
+            self.toast.show("日志已导出", "success")
+        else:
+            self.toast.show("导出失败", "error")
+
     def _show_file_list(self) -> None:
-        """打开「文件列表与下载顺序」对话框。"""
+        """打开「文件列表与下载顺序」对话框。
+
+        ⚠️ 用 ``show()`` 而**不是** ``exec()``：exec 是模态，会挡住主页面 ——
+        用户实测反馈「打开文件列表之后点不了主页面」。非模态后可以边看列表
+        边操作主界面；已打开的窗口再次点击时只是前置，不重复创建。
+        """
         from .file_list import FileListDialog
 
+        existing = getattr(self, "_file_dlg", None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            existing.refresh()
+            return
         dlg = FileListDialog(self)
-        dlg.exec()
+        dlg.setModal(False)                 # 明确非模态
+        dlg.setWindowFlag(Qt.WindowType.Window, True)   # 独立窗口，可最小化
+        self._file_dlg = dlg                # 保留引用：否则会被 GC 掉
+        dlg.show()
 
     def _requeue(self) -> None:
         try:
@@ -283,6 +358,10 @@ class MonitorPage(Page):
         hours, rem = divmod(int(uptime), 3600)
         minutes = rem // 60
         self.summary.setText(f"已上传 {bytes_text}　运行时长 {hours} 小时 {minutes} 分")
+        try:
+            self.log_level.setText(f"日志 {len(self.log.tail(100000))} 行")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def factories() -> list:

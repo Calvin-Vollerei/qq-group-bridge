@@ -146,7 +146,9 @@ class LogView(QPlainTextEdit):
         super().__init__(parent)
         self.setReadOnly(True)
         self.setMaximumBlockCount(self.MAX_BLOCKS)
-        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        # 旧版是 wrap="none"（长行横向滚动）—— 日志里长路径/长文件名
+        # 自动换行会很难读，这里保持一致
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         # 等宽字体，日志对齐更整齐
         font = QFont("Consolas")
         font.setStyleHint(QFont.StyleHint.Monospace)
@@ -167,6 +169,20 @@ class LogView(QPlainTextEdit):
 
     def tail(self, lines: int = 200) -> list[str]:
         return self.toPlainText().splitlines()[-lines:]
+
+    def clear_log(self) -> None:
+        """清空（旧 Tk 版同款按钮）。"""
+        self.clear()
+
+    def export(self, path: str) -> bool:
+        """导出到文本文件（旧 Tk 版同款按钮）。"""
+        try:
+            from pathlib import Path as _P
+
+            _P(path).write_text(self.toPlainText(), encoding="utf-8")
+            return True
+        except OSError:
+            return False
 
 
 class Toast(QLabel):

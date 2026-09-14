@@ -49,6 +49,8 @@ class QQPage(Page):
 
         middle = QHBoxLayout()
         middle.setSpacing(12)
+        middle.setStretch(0, 3)
+        middle.setStretch(1, 2)
 
         # ---------------- 左：组件
         comp = Card()
@@ -89,6 +91,15 @@ class QQPage(Page):
             "第一次使用先「启动组件」，它会联网准备 QQ 运行环境（约 300MB，需要等待）。\n"
             "已有组件压缩包时可用「从压缩包安装…」离线安装。"
         ))
+        # 两张卡都允许被压缩到很窄（否则长按钮会把整行撑到 1500px+，
+        # 窗口变小时输入框不跟着缩 —— 用户反馈「宽度不适配」）。
+        # 用 Preferred（可伸展）+ minimumWidth(0) 而不是 Ignored：
+        # Ignored 会让卡片不随窗口变宽，反而失去自适应。
+        from PySide6.QtWidgets import QSizePolicy as _SP
+
+        comp.setSizePolicy(_SP.Policy.Preferred, _SP.Policy.Preferred)
+        comp.setMinimumWidth(0)
+        self._comp_card = comp
         middle.addWidget(comp, 1)
 
         # ---------------- 右：二维码
@@ -96,7 +107,7 @@ class QQPage(Page):
         qr.add(SectionTitle("扫码登录"))
         self.qr_label = QLabel("尚未获取二维码")
         self.qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.qr_label.setMinimumSize(220, 220)
+        self.qr_label.setMinimumSize(150, 150)
         self.qr_label.setStyleSheet(
             "QLabel { background: rgba(255,255,255,0.94); color: #333;"
             " border-radius: 12px; }"
@@ -112,21 +123,26 @@ class QQPage(Page):
         self.btn_qr.setObjectName("Primary")
         self.btn_qr.clicked.connect(self._fetch_qr)
         q1.addWidget(self.btn_qr)
-        btn_probe = QPushButton("② 我已扫码，检查登录状态")
+        btn_probe = QPushButton("② 检查登录状态")
         btn_probe.clicked.connect(self._probe)
         q1.addWidget(btn_probe)
 
         q2 = qr.row()
-        btn_web = QPushButton("🌐  打开 NapCat 网页版（备用扫码入口）")
+        btn_web = QPushButton("🌐  NapCat 网页版")
         btn_web.setObjectName("Ghost")
         btn_web.clicked.connect(self._open_webui)
         q2.addWidget(btn_web)
-        btn_save_qr = QPushButton("保存二维码为图片…")
+        btn_save_qr = QPushButton("保存二维码…")
         btn_save_qr.setObjectName("Ghost")
         btn_save_qr.clicked.connect(self._save_qr)
         q2.addWidget(btn_save_qr)
         q2.addStretch(1)
+        qr.setSizePolicy(_SP.Policy.Preferred, _SP.Policy.Preferred)
+        qr.setMinimumWidth(0)
+        self._qr_card = qr
         middle.addWidget(qr, 1)
+        self._middle_row = middle
+        self._middle_box = None          # 纵向容器（窄窗时启用）
         lay.addLayout(middle)
 
         # ---------------- 连接参数
@@ -135,6 +151,9 @@ class QQPage(Page):
         g = QGridLayout()
         g.setHorizontalSpacing(12)
         g.setVerticalSpacing(8)
+        # 宽度自适应：标签列固定，输入列拉伸填满窗口
+        g.setColumnStretch(0, 0)
+        g.setColumnStretch(1, 1)
 
         g.addWidget(QLabel("OneBot API 地址"), 0, 0)
         self.api_base = QLineEdit()
@@ -179,6 +198,51 @@ class QQPage(Page):
         lay.addStretch(1)
         area.setWidget(root)
         return area
+
+    # ------------------------------------------------------------ 自适应
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        """窗口变窄时把「组件卡 / 二维码卡」从并排改为上下排列。
+
+        ⚠️ 为什么需要：两张卡并排时最小宽度约 1300px，而窗口可能只有 900px ——
+        结果是内容被挤出可视区（用户反馈「宽度不适配」）。
+        改为上下排列后，窄窗口也能完整显示，输入框还能占满宽度。
+        """
+        super().resizeEvent(event)
+        try:
+            self._apply_responsive()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _apply_responsive(self) -> None:
+        from PySide6.QtWidgets import QVBoxLayout
+
+        narrow = self.width() < 1250
+        has_box = self._middle_box is not None
+        if narrow == has_box:
+            return                       # 状态一致，什么都不用做
+
+        if narrow:
+            # 并排 → 上下
+            self._middle_row.removeWidget(self._comp_card)
+            self._middle_row.removeWidget(self._qr_card)
+            box = QVBoxLayout()
+            box.setSpacing(12)
+            box.addWidget(self._comp_card)
+            box.addWidget(self._qr_card)
+            self._middle_box = box
+            root_lay = self.layout().itemAt(0).widget().widget().layout()
+            root_lay.insertLayout(1, box)
+        else:
+            # 上下 → 并排
+            box = self._middle_box
+            box.removeWidget(self._comp_card)
+            box.removeWidget(self._qr_card)
+            root_lay = self.layout().itemAt(0).widget().widget().layout()
+            root_lay.removeItem(box)
+            self._middle_row.addWidget(self._comp_card, 3)
+            self._middle_row.addWidget(self._qr_card, 2)
+            self._middle_box = None
 
     # ------------------------------------------------------------ 生命周期
 

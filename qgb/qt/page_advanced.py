@@ -85,6 +85,8 @@ class AdvancedPage(Page):
             g = QGridLayout()
             g.setHorizontalSpacing(12)
             g.setVerticalSpacing(8)
+            g.setColumnStretch(0, 0)
+            g.setColumnStretch(1, 1)
             for i, (key, hint, note) in enumerate(rows):
                 g.addWidget(QLabel(note), i, 0)
                 field = NumField()
