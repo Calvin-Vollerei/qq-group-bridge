@@ -33,6 +33,21 @@ hiddenimports = [
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtWidgets",
+    # ⚠️ 新界面的页面模块是**动态导入**的（pages.py 里用
+    #    importlib.import_module 懒加载），PyInstaller 的静态分析发现不了它们。
+    #    不显式列出来，打包后会报 ModuleNotFoundError: No module named
+    #    'qgb.qt.page_groups' —— 实测踩到过（源码跑没问题、exe 一开就崩）。
+    "qgb.qt.app",
+    "qgb.qt.shell",
+    "qgb.qt.pages",
+    "qgb.qt.widgets",
+    "qgb.qt.themes",
+    "qgb.qt.blur",
+    "qgb.qt.glass",
+    "qgb.qt.page_groups",
+    "qgb.qt.page_qq",
+    "qgb.qt.page_netdisk",
+    "qgb.qt.page_advanced",
 ]
 
 # ---------------------------------------------------------------- 排除项
