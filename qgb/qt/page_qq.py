@@ -1,4 +1,11 @@
-"""QQ 登录页：组件托管、二维码登录、状态与令牌。"""
+"""QQ 登录页：组件托管、扫码登录、连接参数。
+
+补齐旧 Tk 版功能（对照 qgb/gui/tab_qq.py）：
+  启动/停止组件、从压缩包安装、打开安装目录、获取/保存二维码、
+  检查登录状态、打开 NapCat 网页版（备用扫码入口）、
+  连接参数（OneBot API / WebUI 地址 / OneBot 令牌 / WebUI 令牌）、
+  保存令牌（加密）、从 NapCat 配置自动读取令牌。
+"""
 
 from __future__ import annotations
 
@@ -23,12 +30,6 @@ log = logging.getLogger(__name__)
 
 
 class QQPage(Page):
-    """QQ 组件与扫码登录。
-
-    二维码来自控制器的 ``qrcode`` 属性（PNG 字节）；控制器已经处理了
-    "新请求取代旧请求"的语义（见 controller.fetch_qrcode 的说明）。
-    """
-
     title = "QQ 登录"
 
     def build(self) -> QWidget:
@@ -49,7 +50,7 @@ class QQPage(Page):
         middle = QHBoxLayout()
         middle.setSpacing(12)
 
-        # ---------------- 左：组件状态与控制
+        # ---------------- 左：组件
         comp = Card()
         head = comp.row()
         head.addWidget(SectionTitle("QQ 组件（NapCat）"))
@@ -60,30 +61,33 @@ class QQPage(Page):
         self.comp_info = Hint("")
         comp.add(self.comp_info)
 
-        row = comp.row()
+        r1 = comp.row()
         self.btn_start = QPushButton("启动组件")
         self.btn_start.setObjectName("Primary")
         self.btn_start.clicked.connect(self._start)
-        row.addWidget(self.btn_start)
-
+        r1.addWidget(self.btn_start)
         btn_stop = QPushButton("停止")
         btn_stop.clicked.connect(self._stop)
-        row.addWidget(btn_stop)
-
+        r1.addWidget(btn_stop)
         btn_refresh = QPushButton("刷新状态")
         btn_refresh.setObjectName("Ghost")
         btn_refresh.clicked.connect(self.refresh)
-        row.addWidget(btn_refresh)
+        r1.addWidget(btn_refresh)
 
+        r2 = comp.row()
+        btn_install = QPushButton("从压缩包安装…")
+        btn_install.setObjectName("Ghost")
+        btn_install.clicked.connect(self._install)
+        r2.addWidget(btn_install)
         btn_dir = QPushButton("打开安装目录")
         btn_dir.setObjectName("Ghost")
         btn_dir.clicked.connect(self._open_dir)
-        row.addWidget(btn_dir)
+        r2.addWidget(btn_dir)
+        r2.addStretch(1)
 
         comp.add(Hint(
-            "第一次使用需要先「启动组件」，它会联网准备 QQ 运行环境。\n"
-            "状态一直是「未安装」时，请用旧界面（--ui tk）里的安装向导，"
-            "或手动解压自带的组件包。"
+            "第一次使用先「启动组件」，它会联网准备 QQ 运行环境（约 300MB，需要等待）。\n"
+            "已有组件压缩包时可用「从压缩包安装…」离线安装。"
         ))
         middle.addWidget(comp, 1)
 
@@ -94,46 +98,83 @@ class QQPage(Page):
         self.qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.qr_label.setMinimumSize(220, 220)
         self.qr_label.setStyleSheet(
-            "QLabel { background: rgba(255,255,255,0.92); color: #333;"
+            "QLabel { background: rgba(255,255,255,0.94); color: #333;"
             " border-radius: 12px; }"
         )
         qr.add(self.qr_label, 1)
 
-        self.qr_hint = Hint("点「获取/刷新二维码」，然后用手机 QQ（建议小号）扫码。")
+        self.qr_hint = Hint("点「① 获取/刷新二维码」，用手机 QQ（建议小号）扫码。")
+        self.qr_hint.setWordWrap(True)
         qr.add(self.qr_hint)
 
-        qrow = qr.row()
+        q1 = qr.row()
         self.btn_qr = QPushButton("① 获取/刷新二维码")
         self.btn_qr.setObjectName("Primary")
         self.btn_qr.clicked.connect(self._fetch_qr)
-        qrow.addWidget(self.btn_qr)
-
-        btn_probe = QPushButton("检查登录状态")
+        q1.addWidget(self.btn_qr)
+        btn_probe = QPushButton("② 我已扫码，检查登录状态")
         btn_probe.clicked.connect(self._probe)
-        qrow.addWidget(btn_probe)
+        q1.addWidget(btn_probe)
 
-        btn_save_qr = QPushButton("保存二维码")
+        q2 = qr.row()
+        btn_web = QPushButton("🌐  打开 NapCat 网页版（备用扫码入口）")
+        btn_web.setObjectName("Ghost")
+        btn_web.clicked.connect(self._open_webui)
+        q2.addWidget(btn_web)
+        btn_save_qr = QPushButton("保存二维码为图片…")
         btn_save_qr.setObjectName("Ghost")
         btn_save_qr.clicked.connect(self._save_qr)
-        qrow.addWidget(btn_save_qr)
+        q2.addWidget(btn_save_qr)
+        q2.addStretch(1)
         middle.addWidget(qr, 1)
         lay.addLayout(middle)
 
-        # ---------------- WebUI 令牌
-        token = Card()
-        token.add(SectionTitle("组件 WebUI 令牌（排障用）"))
-        trow = token.row()
+        # ---------------- 连接参数
+        params = Card()
+        params.add(SectionTitle("连接参数"))
+        g = QGridLayout()
+        g.setHorizontalSpacing(12)
+        g.setVerticalSpacing(8)
+
+        g.addWidget(QLabel("OneBot API 地址"), 0, 0)
+        self.api_base = QLineEdit()
+        self.api_base.setPlaceholderText("http://127.0.0.1:3000")
+        g.addWidget(self.api_base, 0, 1)
+
+        g.addWidget(QLabel("WebUI 地址"), 1, 0)
         self.webui_base = QLineEdit()
         self.webui_base.setPlaceholderText("http://127.0.0.1:6099")
-        trow.addWidget(self.webui_base, 1)
-        btn_find = QPushButton("从组件配置自动读取")
-        btn_find.clicked.connect(self._discover_token)
-        trow.addWidget(btn_find)
-        token.add(Hint(
-            "程序会**优先以组件自己的配置为准**读取令牌 —— 切换运行方式后旧令牌会失效，"
-            "用旧值只会得到「令牌无效」并触发登录限流。"
+        g.addWidget(self.webui_base, 1, 1)
+
+        g.addWidget(QLabel("OneBot 访问令牌"), 2, 0)
+        self.onebot_token = QLineEdit()
+        self.onebot_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.onebot_token.setPlaceholderText("可留空")
+        g.addWidget(self.onebot_token, 2, 1)
+
+        g.addWidget(QLabel("WebUI 令牌"), 3, 0)
+        self.webui_token = QLineEdit()
+        self.webui_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.webui_token.setPlaceholderText("一般无需手填，点右侧自动读取")
+        g.addWidget(self.webui_token, 3, 1)
+        params.body.addLayout(g)
+
+        prow = params.row()
+        btn_save_tok = QPushButton("保存令牌（加密）")
+        btn_save_tok.setObjectName("Primary")
+        btn_save_tok.clicked.connect(self._save_tokens)
+        prow.addWidget(btn_save_tok)
+        btn_auto = QPushButton("从 NapCat 配置自动读取")
+        btn_auto.clicked.connect(self._discover_token)
+        prow.addWidget(btn_auto)
+        prow.addStretch(1)
+
+        params.add(Hint(
+            "程序**以组件自己的配置文件为准**读取 WebUI 令牌 —— 切换运行方式后旧令牌会失效，"
+            "用旧值只会得到「令牌无效」并触发登录限流。所以一般不需要手填。\n"
+            "两个令牌都用 Windows DPAPI 加密保存，不写进配置文件。"
         ))
-        lay.addWidget(token)
+        lay.addWidget(params)
 
         lay.addStretch(1)
         area.setWidget(root)
@@ -142,6 +183,9 @@ class QQPage(Page):
     # ------------------------------------------------------------ 生命周期
 
     def on_start(self) -> None:
+        cfg = self.controller.config
+        self.api_base.setText(cfg.napcat.api_base or "")
+        self.webui_base.setText(cfg.napcat.webui_base or "")
         self.refresh()
 
     def refresh(self) -> None:
@@ -163,21 +207,17 @@ class QQPage(Page):
             f"启动器：{status.get('launcher') or '—'}"
             + (f"\nPID：{status.get('pid')}" if status.get("pid") else "")
         )
-        try:
-            self.webui_base.setText(self.controller.napcat_webui_url())
-        except Exception:  # noqa: BLE001
-            pass
 
-    # ------------------------------------------------------------ 动作
+    # ------------------------------------------------------------ 组件
 
     def _start(self) -> None:
         try:
             ok = self.controller.start_napcat()
-            self.toast.show("组件启动中…" if ok else "启动未生效，请看下方状态", 
+            self.toast.show("组件启动中…" if ok else "启动未生效，请看状态",
                             "success" if ok else "warning")
             self.refresh()
         except Exception as exc:  # noqa: BLE001
-            self.toast.show(f"启动失败：{type(exc).__name__}: {exc}", "error")
+            self.toast.show(f"启动失败：{exc}", "error")
 
     def _stop(self) -> None:
         try:
@@ -186,6 +226,21 @@ class QQPage(Page):
             self.refresh()
         except Exception as exc:  # noqa: BLE001
             self.toast.show(f"停止失败：{type(exc).__name__}", "error")
+
+    def _install(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择 NapCat 组件压缩包", "", "压缩包 (*.zip)")
+        if not path:
+            return
+        try:
+            ok = self.controller.install_napcat_from_zip(path)
+            self.toast.show("组件安装完成" if ok else "安装失败，请看日志",
+                            "success" if ok else "error")
+            self.refresh()
+        except Exception as exc:  # noqa: BLE001
+            self.toast.show(f"安装失败：{type(exc).__name__}: {exc}", "error")
 
     def _open_dir(self) -> None:
         import os
@@ -203,6 +258,8 @@ class QQPage(Page):
                 subprocess.Popen(["xdg-open", path])  # noqa: S603,S607
         except Exception as exc:  # noqa: BLE001
             self.toast.show(f"打开失败：{type(exc).__name__}", "error")
+
+    # ------------------------------------------------------------ 登录
 
     def _fetch_qr(self) -> None:
         self.btn_qr.setEnabled(False)
@@ -226,6 +283,16 @@ class QQPage(Page):
         except Exception as exc:  # noqa: BLE001
             self.toast.show(f"查询失败：{type(exc).__name__}", "error")
 
+    def _open_webui(self) -> None:
+        import webbrowser
+
+        try:
+            url = self.controller.napcat_webui_url() or self.webui_base.text().strip()
+            webbrowser.open(url)
+            self.toast.show("已用浏览器打开 NapCat 网页版", "info")
+        except Exception as exc:  # noqa: BLE001
+            self.toast.show(f"打开失败：{type(exc).__name__}", "error")
+
     def _save_qr(self) -> None:
         from PySide6.QtWidgets import QFileDialog
 
@@ -244,6 +311,40 @@ class QQPage(Page):
             self.toast.show("二维码已保存", "success")
         except OSError as exc:
             self.toast.show(f"保存失败：{exc}", "error")
+
+    # ------------------------------------------------------------ 令牌
+
+    def _save_tokens(self) -> None:
+        cfg = self.controller.config
+        cfg.napcat.api_base = self.api_base.text().strip()
+        cfg.napcat.webui_base = self.webui_base.text().strip()
+        try:
+            problems = self.controller.save_settings()
+        except Exception as exc:  # noqa: BLE001
+            self.toast.show(f"保存配置失败：{type(exc).__name__}", "error")
+            return
+
+        saved = []
+        try:
+            from ..secrets import KEY_NAPCAT_WEBUI_TOKEN, KEY_QQ_ONEBOT_TOKEN
+
+            store = self.controller.secrets
+            if store is not None:
+                if self.webui_token.text().strip():
+                    store.set(KEY_NAPCAT_WEBUI_TOKEN, self.webui_token.text().strip())
+                    saved.append("WebUI")
+                if self.onebot_token.text().strip():
+                    store.set(KEY_QQ_ONEBOT_TOKEN, self.onebot_token.text().strip())
+                    saved.append("OneBot")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("写令牌失败：%s", exc)
+
+        self.webui_token.clear()
+        self.onebot_token.clear()
+        msg = "地址已保存" + (f"，令牌已加密保存（{'+'.join(saved)}）" if saved else "（未填新令牌）")
+        if problems:
+            msg += "；注意：" + "；".join(problems[:1])
+        self.toast.show(msg, "success" if not problems else "warning")
 
     def _discover_token(self) -> None:
         try:
@@ -273,8 +374,7 @@ class QQPage(Page):
                 self.qr_label.setText("二维码不可用")
                 hint = str(event.data.get("hint") or "")
                 self.qr_hint.setText(
-                    f"{getattr(event, 'message', '')}\n{hint}\n"
-                    "可以再点一次重试。".strip()
+                    f"{getattr(event, 'message', '')}\n{hint}\n可以再点一次重试。".strip()
                 )
         elif kind == "napcat":
             self.refresh()
@@ -292,7 +392,6 @@ class QQPage(Page):
             self.qr_label.setText("二维码解码失败")
             return
         side = max(160, min(self.qr_label.width(), self.qr_label.height()) - 12)
-        self.qr_label.setPixmap(
-            pix.scaled(side, side, Qt.AspectRatioMode.KeepAspectRatio,
-                       Qt.TransformationMode.SmoothTransformation)
-        )
+        self.qr_label.setPixmap(pix.scaled(
+            side, side, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation))

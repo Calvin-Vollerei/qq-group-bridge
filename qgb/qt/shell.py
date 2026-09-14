@@ -168,51 +168,12 @@ class Shell(QMainWindow):
         outer.setSpacing(8)
 
 
-        # ---- 顶层条
-        #
-        # ⚠️ 这里是"标题栏死黑/死白"的修复点：早期版本在无边框窗口上让顶层条
-        #    直接画在窗口背景上 —— 背景透明时透出黑底就是"死黑"，
-        #    切到日间主题又变成"死白"。现在给它一个**自己的半透明底**
-        #    （objectName=TopBar），颜色跟随主题，不再受窗口背景影响。
-        top_bar = QFrame()
-        top_bar.setObjectName("TopBar")
-        bar = QHBoxLayout(top_bar)      # 父级写在构造里（见 Card.row 的说明）
-        bar.setContentsMargins(12, 8, 12, 8)
-        bar.setSpacing(8)
-        outer.addWidget(top_bar)
-
-        self.title_label = QLabel("QQ群文件搬运工")
-        self.title_label.setObjectName("Title")
-        bar.addWidget(self.title_label)
-
+        # 顶层条已按用户要求移除：主题统一后它只剩重复信息。
+        # 窗口标题由系统标题栏显示；关键状态（QQ/运行态）在「监控」页顶部徽标里。
+        # 保留这两个控件引用是为了兼容事件处理代码（不再加入布局）。
         self.glass_badge = StatusBadge()
-        bar.addWidget(self.glass_badge)
         self.state_badge = StatusBadge("未启动")
-        bar.addWidget(self.state_badge)
-        bar.addStretch(1)
-
-        # 主题切换按钮已移除（用户要求"主题不要了"，只保留单套深色）
         self.style_badge = StatusBadge("深色")
-        bar.addWidget(self.style_badge)
-
-        # 自绘窗口按钮只在无边框模式下需要；系统边框自带最小化/最大化/关闭，
-        # 再放一套既重复、又容易和拖动逻辑抢事件（实测"点一下就隐藏"多半源于此）。
-        if self.frameless:
-            self.btn_min = QPushButton("—")
-            self.btn_min.setObjectName("Ghost")
-            self.btn_min.setFixedWidth(38)
-            self.btn_min.clicked.connect(self.showMinimized)
-            bar.addWidget(self.btn_min)
-
-            self.btn_close = QPushButton("✕")
-            self.btn_close.setObjectName("Ghost")
-            self.btn_close.setFixedWidth(38)
-            self.btn_close.clicked.connect(self.close)
-            bar.addWidget(self.btn_close)
-        # 注意：top_bar 已经用 outer.addWidget() 加进去了，
-        # 这里**不能**再 outer.addLayout(bar) —— 那是重复挂载同一个布局，
-        # Qt 会报 "QLayout::addChildLayout: layout ... already has a parent"
-        # （用 qInstallMessageHandler 打调用栈定位到的）。
 
         # ---- 标签页
         self.tabs = QTabWidget()

@@ -68,6 +68,9 @@ class MonitorPage(Page):
     title = "监控"
 
     def _build(self) -> QWidget:
+        # 文件列表对话框的筛选状态：挂在页面上，关窗再开时保留
+        self._flt: dict = {}
+
         area = QScrollArea()
         area.setWidgetResizable(True)
         area.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -115,6 +118,12 @@ class MonitorPage(Page):
         self.btn_requeue.setObjectName("Ghost")
         self.btn_requeue.clicked.connect(self._requeue)
         btns.addWidget(self.btn_requeue)
+
+        # 文件列表 / 下载顺序（旧 Tk 版同款入口）
+        btn_list = QPushButton("📋  文件列表 / 下载顺序")
+        btn_list.setObjectName("Ghost")
+        btn_list.clicked.connect(self._show_file_list)
+        btns.addWidget(btn_list)
         btns.addStretch(1)
         lay.addWidget(control)
 
@@ -202,6 +211,13 @@ class MonitorPage(Page):
             )
         except Exception as exc:  # noqa: BLE001
             self.toast.show(f"刷新失败：{type(exc).__name__}", "error")
+
+    def _show_file_list(self) -> None:
+        """打开「文件列表与下载顺序」对话框。"""
+        from .file_list import FileListDialog
+
+        dlg = FileListDialog(self)
+        dlg.exec()
 
     def _requeue(self) -> None:
         try:
