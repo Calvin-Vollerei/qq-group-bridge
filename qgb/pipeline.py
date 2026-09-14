@@ -658,7 +658,28 @@ class Pipeline:
                     hint="稍后会自动重试；若持续出现，请重启一次 QQ 组件。",
                 )
 
-            url = self.client.get_group_file_url(gf.group_id, gf.file_id, gf.busid)
+            try:
+                url = self.client.get_group_file_url(gf.group_id, gf.file_id, gf.busid)
+            except NapCatError as exc:
+                # code=-134（sendGroupFileDownloadReq 失败）：
+                # QQ 侧取不到下载直链 —— 常见于文件已被删除、权限被收回、
+                # 或该文件对登录账号不可见。这类**重试也没用**，
+                # 所以直接判永久失败并写清原因，不要像临时故障那样反复重试。
+                msg = str(exc)
+                if "-134" in msg or "文件下载失败" in msg:
+                    self.store.mark(
+                        key, TransferState.FAILED,
+                        error=f"QQ 侧取不到下载直链（{msg[:60]}）")
+                    self.stats.failed += 1
+                    self._emit(
+                        "log",
+                        f"放弃（取不到下载直链，重试无意义）：{gf.name} —— "
+                        "该文件可能已被删除或权限已变更",
+                        level="warning",
+                        group_id=gf.group_id, name=gf.name,
+                    )
+                    return
+                raise
 
             def on_progress(p: DownloadProgress) -> None:
                 self._emit(
