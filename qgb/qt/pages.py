@@ -269,13 +269,6 @@ class MonitorPage(Page):
         self.summary.setText(f"已上传 {bytes_text}　运行时长 {hours} 小时 {minutes} 分")
 
 
-def _advanced(shell):
-    """懒加载「高级」页（含模糊模式切换）。"""
-    from .page_advanced import AdvancedPage
-
-    return AdvancedPage(shell)
-
-
 def factories() -> list:
     """返回按顺序创建页面的可调用对象列表。
 
@@ -283,11 +276,16 @@ def factories() -> list:
     """
     return [
         MonitorPage,
-        lambda shell: PlaceholderPage(shell, "群与规则",
-                                      "将支持：群号增删、关键字包含/排除、体积与后缀过滤。"),
-        lambda shell: PlaceholderPage(shell, "QQ 登录",
-                                      "将支持：NapCat 托管、二维码登录、组件安装与状态。"),
-        lambda shell: PlaceholderPage(shell, "网盘与凭据",
-                                      "将支持：WebDAV 地址与凭据、连接测试、远端目录。"),
-        lambda shell: _advanced(shell),
+        lambda shell: _lazy(shell, "page_groups", "GroupsPage"),
+        lambda shell: _lazy(shell, "page_qq", "QQPage"),
+        lambda shell: _lazy(shell, "page_netdisk", "NetdiskPage"),
+        lambda shell: _lazy(shell, "page_advanced", "AdvancedPage"),
     ]
+
+
+def _lazy(shell, module: str, cls: str):
+    """按需导入页面模块，避免启动时把全部页面都拉起来。"""
+    import importlib
+
+    mod = importlib.import_module(f".{module}", package=__package__)
+    return getattr(mod, cls)(shell)
