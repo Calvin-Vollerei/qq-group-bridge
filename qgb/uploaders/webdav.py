@@ -21,6 +21,7 @@ import requests
 from requests.auth import HTTPBasicAuth
 
 from ..errors import TransientError, UploadError
+from . import _circuit
 from ..secrets import (
     KEY_NETDISK_WEBDAV_PASSWORD,
     KEY_NETDISK_WEBDAV_USERNAME,
@@ -261,8 +262,17 @@ class WebDAVUploader(Uploader):
             if resp.status_code == 405:
                 # 实测（本机 OpenList + 百度驱动）：同一个目录里绝大多数 PUT 返回 201，
                 # 少数返回 405，且成功/失败的文件名特征没有差别（都含中文/空格/括号）。
-                # 说明这不是权限、也不是文件名合法性问题，而是驱动侧的偶发拒绝
-                # （限流/上游抖动）。所以归为**可重试**，不要一次就判死。
+                # 说明多数情况是驱动侧的偶发拒绝（限流/上游抖动）→ 归为可重试。
+                #
+                # 但**持续** 405 是完全不同的故障：真实事故里 OpenList 的上传配置
+                # 被写坏（upload_api 变空），它对所有 PUT 都返回 405，而程序每轮都
+                # 重下几百 MB 的大文件。所以要加熔断：连续多次就停下并提示排查方向。
+                _circuit.note_405()
+                if _circuit.is_tripped():
+                    raise UploadError(
+                        "网盘持续拒绝接收上传（HTTP 405）",
+                        hint=_circuit.trip_hint(),
+                    )
                 raise TransientError(
                     "网盘暂时拒绝接收（HTTP 405）",
                     hint=(
@@ -292,6 +302,9 @@ class WebDAVUploader(Uploader):
                 result.verified = True
 
         log.info("已上传：%s（%s）", filename, human_size(total))
+        # 上传成功 → 清零"连续 405"计数：说明服务端是好的，
+        # 之前的 405 确实只是偶发抖动，不该累加成熔断。
+        _circuit.note_success()
         return result
 
     # -------------------------------------------------- 回读

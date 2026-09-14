@@ -583,6 +583,14 @@ class AppController:
         store = self.store
         if store is None:
             return 0
+        # 用户主动点「重试失败项」时重置 405 熔断 ——
+        # 他很可能刚修好 OpenList，不重置会被之前的熔断一直拦着。
+        try:
+            from .uploaders import _circuit
+
+            _circuit.reset()
+        except Exception:  # noqa: BLE001
+            pass
         n = store.requeue()
         self._post("info", f"已把 {n} 个失败项重新排队")
         return n
