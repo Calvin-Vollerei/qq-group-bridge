@@ -14,7 +14,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from ..models import TransferState
@@ -45,18 +45,56 @@ STATE_LABEL = {
 SIZE_BUCKETS = ("全部", "< 1 MB", "1–10 MB", "10–100 MB", "≥ 100 MB")
 
 
-class FileListDialog(QDialog):
+class FileListDialog(QWidget):
     """文件列表：排序 / 搜索 / 筛选 / 置顶 / 移动 / 优先执行。"""
 
     def __init__(self, page) -> None:
-        super().__init__(page)
+        # ⚠️ **必须无父**：Qt 对有父对象的顶层窗会自动加上 Qt::Tool 标志，
+        #    而 Tool 窗口在 Windows 上就是"始终停在前端、点别处不沉下去"
+        #    （用户实测反馈）。无父 + 标准窗口标志才会走正常 z-order。
+        #    页面上会保留引用（page._file_dlg），不会因为无父被回收。
+        super().__init__(None)
         self.page = page
         self.controller = page.controller
         self.setWindowTitle("文件列表与下载顺序")
-        self.resize(1180, 720)
-        # 非模态 + 独立窗口：用户要求"打开列表后仍能操作主页面"
-        self.setModal(False)
-        self.setWindowFlag(Qt.WindowType.Window, True)
+        # 尺寸按屏幕给足，并允许 Win 分屏（拖到屏幕边缘吸附）
+        try:
+            from PySide6.QtGui import QGuiApplication
+
+            scr = QGuiApplication.primaryScreen()
+            avail = scr.availableGeometry() if scr is not None else None
+            if avail is not None and avail.width() > 200:
+                w = max(1000, min(int(avail.width() * 0.66), 1560))
+                h = max(680, min(int(avail.height() * 0.78), 1080))
+                self.resize(w, h)
+            else:
+                self.resize(1280, 820)
+        except Exception:  # noqa: BLE001
+            self.resize(1280, 820)
+
+        # ⚠️ 三件事一起决定了"能不能分屏、能不能沉下去"：
+        #    1. 非模态 —— 否则挡住主界面（用户实测反馈过）；
+        #    2. **标准窗口**（不设 Frameless / Tool / WindowStaysOnTop 之类）——
+        #       Windows 的 Aero Snap 与正常 z-order 只对标准窗口生效；
+        #    3. 用独立顶层窗口而不是 QDialog 的子窗 —— 子窗会被父窗口
+        #       一直压在上面，点别处也不会沉下去。
+        # ⚠️ 关键：**不要**用 QDialog。
+        #    QDialog 在 Windows 上会带上 Tool/对话框语义，表现就是
+        #    "始终停在前端、点别处也不沉下去"（用户实测反馈）。
+        #    这里用顶层 QWidget + 只保留标准窗口标志：
+        #      · Window                —— 独立顶层窗
+        #      · WindowTitleHint       —— 有系统标题栏（拖到屏幕边缘即触发 Aero Snap）
+        #      · WindowSystemMenuHint  —— 右键系统菜单 / Win11 分屏布局需要
+        #      · MinMaxButtonsHint     —— 最大化按钮（分屏后可用于还原）
+        #    不设 Tool / FramelessWindowHint / WindowStaysOnTopHint。
+        self.setWindowFlags(
+            Qt.WindowType.Window
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.WindowMinMaxButtonsHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 12)

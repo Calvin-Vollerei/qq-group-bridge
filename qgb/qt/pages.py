@@ -289,8 +289,8 @@ class MonitorPage(Page):
             existing.refresh()
             return
         dlg = FileListDialog(self)
-        dlg.setModal(False)                 # 明确非模态
-        dlg.setWindowFlag(Qt.WindowType.Window, True)   # 独立窗口，可最小化
+        # 窗口标志由 FileListDialog 自己设好（标准窗口 → 可 Win 分屏、能沉到别的窗口后面）。
+        # 这里**不要**再 setWindowFlag，否则会覆盖它的标志、把分屏能力弄没。
         self._file_dlg = dlg                # 保留引用：否则会被 GC 掉
         dlg.show()
 

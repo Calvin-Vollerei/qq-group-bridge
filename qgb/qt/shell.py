@@ -115,16 +115,37 @@ class Shell(QMainWindow):
         self.glass_style = blur.DEFAULT_STYLE
 
         self.setWindowTitle("QQ群文件搬运工")
-        self.setMinimumSize(880, 560)
-        self.resize(1080, 720)
+        # 默认尺寸按屏幕比例给足（用户反馈"默认窗口太小"）：
+        # 宽取屏幕 74%、高取 78%，并夹在合理区间内；小屏也不会超出工作区。
+        self.setMinimumSize(900, 600)
+        try:
+            from PySide6.QtGui import QGuiApplication
+
+            scr = QGuiApplication.primaryScreen()
+            avail = scr.availableGeometry() if scr is not None else None
+            if avail is not None and avail.width() > 200 and avail.height() > 200:
+                w = max(1240, min(int(avail.width() * 0.74), 1760))
+                h = max(820, min(int(avail.height() * 0.78), 1180))
+                self.resize(w, h)
+                # 居中偏上，避免贴边
+                self.move(avail.x() + max(0, (avail.width() - w) // 2),
+                          avail.y() + max(0, (avail.height() - h) // 3))
+            else:
+                self.resize(1360, 900)
+        except Exception:  # noqa: BLE001
+            self.resize(1360, 900)
 
         # ⚠️ 窗口外观由毛玻璃路线决定（见 glass.GlassCapability.requires_frameless）：
         #    原生材质（A/B）必须用**系统边框**且**不设** WA_TranslucentBackground，
         #    否则 Qt 自绘的背景会盖住 DWM 的材质 —— 实测就是"没有毛玻璃、只有半透明块"。
         #    自绘路线（C）才用无边框 + 半透明 + 自绘圆角。
-        self.frameless = self.capability.requires_frameless
-        if self.frameless:
-            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        # ⚠️ 主窗口**不再使用无边框**：
+        #    用户反馈「二级页面不能兼容 Win 分屏」「始终在前端」。无边框窗口
+        #    （FramelessWindowHint）不参与 Windows 的 Aero Snap 与正常 z-order，
+        #    拖到屏幕边缘不会吸附、也不会被别的窗口盖住。
+        #    毛玻璃（blur.py 的 aero 序列）在标准窗口上同样生效 —— 系统标题栏
+        #    与客户区都吃到材质，所以不需要为了模糊牺牲分屏能力。
+        self.frameless = False
         # ⚠️ 无论哪条路线都要开 WA_TranslucentBackground：
         #    自绘路线需要它来画圆角；原生路线也需要它，因为**客户区**由我们自己
         #    绘制模糊背景（Qt 在 Windows 上无法把 DWM 材质透到客户区，
@@ -314,7 +335,7 @@ class Shell(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("运行日志")
-        dlg.resize(880, 460)
+        dlg.resize(1100, 620)
         lay = VBox(dlg)
         lay.setContentsMargins(10, 10, 10, 10)
         view = LogView()
