@@ -305,14 +305,34 @@ class Shell(QMainWindow):
 
     def _on_event(self, event) -> None:
         # 日志
+        #
+        # ⚠️ 这里必须写进**用户看得见的**日志框。
+        #    踩过的坑：早期写进 Shell 自建的 self.log_view，而那个控件在
+        #    _build_ui 里被 hide() 了（只给"日志"弹窗用）——
+        #    结果是"监控页日志栏一条都没有"，连「配置有未解决项」这类
+        #    启动失败原因也被吞掉，用户只看到"点了开始没反应"。
+        #    现在转发给各页面由它们自己显示（MonitorPage 写进自己的日志卡）。
         if getattr(event, "message", "") and getattr(event, "kind", "") not in (
             "progress", "stats"
         ):
             level = getattr(event, "level", "info")
             if getattr(event, "kind", "") == "file":
                 level = "success"
-            self.log_view.append_line(event.message, level,
-                                      timestamp=_now())
+            # 兜底：没有页面接管时仍然写进内置视图（供"日志"弹窗查看）
+            handled = False
+            for page in getattr(self, "pages", []):
+                sink = getattr(page, "append_log", None)
+                if callable(sink):
+                    try:
+                        sink(event.message, level, _now())
+                        handled = True
+                    except Exception:  # noqa: BLE001
+                        log.debug("页面日志写入失败", exc_info=True)
+            if not handled:
+                self.log_view.append_line(event.message, level, timestamp=_now())
+            else:
+                # 同时留一份给"日志"弹窗（用户可能想在独立窗口盯日志）
+                self.log_view.append_line(event.message, level, timestamp=_now())
         # 顶部状态
         if getattr(event, "kind", "") == "state":
             state = event.data.get("state")

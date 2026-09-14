@@ -34,6 +34,12 @@ from .widgets import Card, Hint, LogView, Metric, SectionTitle, StatusBadge
 log = logging.getLogger(__name__)
 
 
+def _now_hm() -> str:
+    import time
+
+    return time.strftime("%H:%M:%S")
+
+
 class PlaceholderPage(Page):
     """尚未迁移的页面：明确告诉用户"这页还在迁移"，而不是给个空白。"""
 
@@ -203,9 +209,17 @@ class MonitorPage(Page):
     # ------------------------------------------------------------ 动作
 
     def _start(self) -> None:
+        self.append_log("正在启动监控…", "info", timestamp=_now_hm())
         try:
             ok = self.controller.start_monitor()
-            self.toast.show("已开始监控" if ok else "监控已在运行", "success" if ok else "info")
+            if ok:
+                self.toast.show("已开始监控", "success")
+            else:
+                # 启动失败的原因稍后由控制器的 error 事件写进日志；
+                # 这里也提示一句，避免用户以为"点了没反应"
+                self.append_log("启动未成功：请查看上方错误原因（常见：未填群号 / 未配置凭据）",
+                                "warning", timestamp=_now_hm())
+                self.toast.show("启动未成功，请看日志", "warning")
         except Exception as exc:  # noqa: BLE001
             self.toast.show(f"启动失败：{type(exc).__name__}", "error")
 
@@ -237,6 +251,14 @@ class MonitorPage(Page):
             )
         except Exception as exc:  # noqa: BLE001
             self.toast.show(f"刷新失败：{type(exc).__name__}", "error")
+
+    def append_log(self, message: str, level: str = "info",
+                   timestamp: str | None = None) -> None:
+        """把一条日志写进本页可见的日志框（Shell 通过它转发事件）。"""
+        try:
+            self.log.append_line(message, level, timestamp=timestamp)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _log_dir(self):
         from ..paths import default_data_dir
@@ -308,6 +330,8 @@ class MonitorPage(Page):
 
     def on_event(self, event) -> None:
         kind = getattr(event, "kind", "")
+        # 日志已由 Shell 统一转发到 append_log（避免两处都写导致重复），
+        # 这里只处理状态/进度/统计。
         if kind == "state":
             state = event.data.get("state")
             mapping = {
